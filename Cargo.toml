@@ -1,0 +1,15 @@
+[package]
+name = "mozim"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+rand = "0.8.4"
+libc = "0.2.105"
+nispor = "1.2.0"
+nix = "0.23.0"
+byteorder = "1.4.3"
+etherparse = "0.9.0"

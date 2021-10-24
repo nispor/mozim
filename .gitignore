@@ -1,0 +1,7 @@
+/target
+*.swp
+Cargo.lock
+tags
+vendor/
+*.orig
+*.rej
