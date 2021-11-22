@@ -3,7 +3,7 @@ use std::net::Ipv4Addr;
 use rand;
 use rand::Rng;
 
-use crate::{traits::Emitable, DhcpError, Dhcpv4Option};
+use crate::{traits::Emitable, DhcpError, Dhcpv4Option, ErrorKind};
 
 // RFC 2131
 const BOOTREQUEST: u8 = 1;
@@ -155,11 +155,14 @@ impl Dhcp4Message {
 
     pub fn set_host_name(mut self, host_name: &str) -> Result<Self, DhcpError> {
         if host_name.as_bytes().len() >= SNAME_LEN {
-            Err(DhcpError::invalid_argument(format!(
+            Err(DhcpError::new(
+                ErrorKind::InvalidArgument,
+                format!(
                 "WARN: Specified host_name '{}' exceeded the maximum length {}",
                 host_name,
                 SNAME_LEN - 1
-            )))
+            ),
+            ))
         } else {
             self.host_name = host_name.to_string();
             Ok(self)
@@ -169,11 +172,14 @@ impl Dhcp4Message {
     pub fn set_hw_addr(mut self, hw_addr: &str) -> Result<Self, DhcpError> {
         let hw_addr = hw_addr.replace(":", "").to_ascii_lowercase();
         if hw_addr.as_bytes().len() >= CHADDR_LEN {
-            Err(DhcpError::invalid_argument(format!(
-                "Specified hw_addr '{}' exceeded the maximum length {}",
-                hw_addr,
-                CHADDR_LEN - 1
-            )))
+            Err(DhcpError::new(
+                ErrorKind::InvalidArgument,
+                format!(
+                    "Specified hw_addr '{}' exceeded the maximum length {}",
+                    hw_addr,
+                    CHADDR_LEN - 1
+                ),
+            ))
         } else {
             self.hw_addr = hw_addr.to_string();
             Ok(self)

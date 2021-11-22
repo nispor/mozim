@@ -2,7 +2,9 @@ use libc;
 use nispor::{Iface, NetState};
 use nix;
 
-use crate::{Dhcp4Message, DhcpError, Emitable};
+use crate::{
+    bpf::apply_dhcp_bpf, Dhcp4Message, DhcpError, Emitable, ErrorKind,
+};
 
 const PACKET_HOST: u8 = 0; // a packet addressed to the local host
 
@@ -102,7 +104,7 @@ impl DhcpSocket {
 
         bind_raw_socket(fd, eth_protocol, iface_index, &iface.mac_address)?;
 
-        enable_promiscuous_mode(fd, iface_index)?;
+        accept_all_mac_address(fd, iface_index)?;
 
         apply_dhcp_bpf(fd)?;
 
@@ -114,10 +116,10 @@ fn get_nispor_iface(iface_name: &str) -> Result<Iface, DhcpError> {
     let net_state = match NetState::retrieve() {
         Ok(s) => s,
         Err(e) => {
-            return Err(DhcpError::bug(format!(
-                "Faild to retrieve network state: {}",
-                e
-            )))
+            return Err(DhcpError::new(
+                ErrorKind::Bug,
+                format!("Faild to retrieve network state: {}", e),
+            ))
         }
     };
     for iface in net_state.ifaces.values() {
@@ -125,10 +127,10 @@ fn get_nispor_iface(iface_name: &str) -> Result<Iface, DhcpError> {
             return Ok(iface.clone());
         }
     }
-    Err(DhcpError::invalid_argument(format!(
-        "Interface {} not found",
-        iface_name
-    )))
+    Err(DhcpError::new(
+        ErrorKind::InvalidArgument,
+        format!("Interface {} not found", iface_name),
+    ))
 }
 
 fn mac_address_str_to_u8(
@@ -141,20 +143,23 @@ fn mac_address_str_to_u8(
             data[i] = match u8::from_str_radix(mac_addrs[i], 16) {
                 Ok(d) => d,
                 Err(e) => {
-                    return Err(DhcpError::bug(format!(
-                        "Invalid MAC address {}",
-                        mac_addr
-                    )));
+                    return Err(DhcpError::new(
+                        ErrorKind::Bug,
+                        format!("Invalid MAC address {}", mac_addr),
+                    ));
                 }
             }
         }
         Ok(data)
     } else {
-        Err(DhcpError::bug(format!("Invalid MAC address {}", mac_addr)))
+        Err(DhcpError::new(
+            ErrorKind::Bug,
+            format!("Invalid MAC address {}", mac_addr),
+        ))
     }
 }
 
-fn enable_promiscuous_mode(
+fn accept_all_mac_address(
     fd: libc::c_int,
     iface_index: libc::c_int,
 ) -> Result<(), DhcpError> {
@@ -174,16 +179,15 @@ fn enable_promiscuous_mode(
             std::mem::size_of::<libc::packet_mreq>() as libc::socklen_t,
         );
         if rc != 0 {
-            return Err(DhcpError::bug(format!(
-                "Failed to set socket to promiscuous mode with error: {}",
-                rc
-            )));
+            return Err(DhcpError::new(
+                ErrorKind::Bug,
+                format!(
+                    "Failed to set socket to promiscuous mode with error: {}",
+                    rc
+                ),
+            ));
         }
     }
-    Ok(())
-}
-
-fn apply_dhcp_bpf(fd: libc::c_int) -> Result<(), DhcpError> {
     Ok(())
 }
 
@@ -196,9 +200,10 @@ fn create_raw_socket(
             libc::SOCK_RAW,
             eth_protocol.to_be() as libc::c_int,
         ) {
-            -1 => {
-                Err(DhcpError::bug("libc::socket() failed with -1".to_string()))
-            }
+            -1 => Err(DhcpError::new(
+                ErrorKind::Bug,
+                "libc::socket() failed with -1".to_string(),
+            )),
             fd => Ok(fd),
         }
     }
@@ -236,7 +241,10 @@ fn bind_raw_socket(
             0 => Ok(()),
             rc => {
                 libc::close(fd);
-                Err(DhcpError::bug(format!("Failed to bind socket: {}", rc)))
+                Err(DhcpError::new(
+                    ErrorKind::Bug,
+                    format!("Failed to bind socket: {}", rc),
+                ))
             }
         }
     }

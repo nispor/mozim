@@ -11,15 +11,9 @@ pub struct DhcpError {
 }
 
 impl DhcpError {
-    pub fn invalid_argument(msg: String) -> Self {
+    pub fn new(kind: ErrorKind, msg: String) -> Self {
         Self {
-            kind: ErrorKind::InvalidArgument,
-            msg: msg,
-        }
-    }
-    pub fn bug(msg: String) -> Self {
-        Self {
-            kind: ErrorKind::Bug,
+            kind: kind,
             msg: msg,
         }
     }
