@@ -8,10 +8,14 @@ const CHADDR_LEN: usize = 16;
 const SNAME_LEN: usize = 64;
 const FILE_LEN: usize = 128;
 
-#[derive(Debug, PartialEq, Clone)]
+// https://www.iana.org/assignments/arp-parameters/arp-parameters.xhtml#arp-parameters-2
+const ARP_HW_TYPE_ETHERNET: u8 = 1;
+
+#[derive(Debug, PartialEq, Clone, Default)]
 pub(crate) struct Dhcp4Message {
     msg: v4::Message,
-    message_type: v4::MessageType,
+    mac: String,
+    host_name: String,
 }
 
 impl Dhcp4Message {
@@ -20,7 +24,7 @@ impl Dhcp4Message {
         msg.set_flags(v4::Flags::default());
         Dhcp4Message {
             msg,
-            message_type: v4::MessageType::Discover,
+            ..Default::default()
         }
     }
 
@@ -41,6 +45,7 @@ impl Dhcp4Message {
             error!("{}", e);
             Err(e)
         } else {
+            self.host_name = host_name.to_string();
             self.msg.set_sname_str(host_name);
             Ok(self)
         }
@@ -63,13 +68,21 @@ impl Dhcp4Message {
             error!("{}", e);
             Err(e)
         } else {
+            self.mac = hw_addr.to_string();
             mac_bytes.resize(CHADDR_LEN, 0);
             self.msg.set_chaddr(&mac_bytes);
-            self.msg
-                .opts_mut()
-                .insert(v4::DhcpOption::ClientIdentifier(mac_bytes));
             Ok(self)
         }
+    }
+
+    pub(crate) fn client_identifier_use_mac(mut self) -> Self {
+        let mut iaid = mac_str_to_u8_array(&self.mac);
+        iaid.insert(0, ARP_HW_TYPE_ETHERNET);
+
+        self.msg
+            .opts_mut()
+            .insert(v4::DhcpOption::ClientIdentifier(iaid));
+        self
     }
 
     pub(crate) fn dhcp_discovery(mut self) -> Self {

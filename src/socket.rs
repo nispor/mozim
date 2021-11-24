@@ -46,6 +46,7 @@ impl DhcpSocket {
         let mut dhcp_msg_bytes = Dhcp4Message::new()
             .set_host_name(host_name)?
             .set_hw_addr(&self.iface.mac_address)?
+            .client_identifier_use_mac()
             .dhcp_discovery()
             .to_bytes()?;
 
@@ -60,6 +61,12 @@ impl DhcpSocket {
         )?;
 
         let mut sender_addr: libc::sockaddr_ll = unsafe { std::mem::zeroed() };
+        sender_addr.sll_halen = libc::ETH_ALEN as u8;
+
+        sender_addr.sll_addr[..libc::ETH_ALEN as usize].clone_from_slice(
+            &mac_address_to_eth_mac_bytes("ff:ff:ff:ff:ff:ff")?,
+        );
+        sender_addr.sll_ifindex = self.iface.index as i32;
         let addr_buffer_size: libc::socklen_t =
             std::mem::size_of::<libc::sockaddr_ll>() as libc::socklen_t;
         let addr_ptr = unsafe {
