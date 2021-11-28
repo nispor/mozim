@@ -96,6 +96,8 @@ impl Dhcp4Message {
                 v4::OptionCode::Router,
                 v4::OptionCode::DomainNameServer,
                 v4::OptionCode::DomainName,
+                v4::OptionCode::InterfaceMtu,
+                v4::OptionCode::NTPServers,
             ]));
         self
     }

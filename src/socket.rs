@@ -1,10 +1,11 @@
-use etherparse::PacketBuilder;
 use std::ffi::CString;
 use std::io::Write;
 use std::net::Ipv4Addr;
 use std::net::UdpSocket;
 use std::os::unix::io::AsRawFd;
 
+use dhcproto::{Decodable, Decoder};
+use etherparse::PacketBuilder;
 use libc;
 use nispor::{Iface, NetState};
 use nix;
@@ -125,6 +126,20 @@ impl DhcpSocket {
                 )
             );
         }
+        match etherparse::SlicedPacket::from_ethernet(&buffer) {
+            Err(value) => println!("Err {:?}", value),
+            Ok(value) => {
+                println!("link: {:?}", value.link);
+                println!("vlan: {:?}", value.vlan);
+                println!("ip: {:?}", value.ip);
+                println!("transport: {:?}", value.transport);
+                let dhcp_v4_msg = dhcproto::v4::Message::decode(
+                    &mut Decoder::new(&value.payload),
+                ).unwrap();
+                println!("payload {:?}", dhcp_v4_msg);
+            }
+        }
+
         Ok(None)
     }
 

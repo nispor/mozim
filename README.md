@@ -11,3 +11,7 @@ TODO:
  * Parse DHCP ACK
  * Send DHCP REQUEST
  * Better external API
+
+
+## Design
+ * 
