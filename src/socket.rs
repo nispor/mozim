@@ -49,19 +49,19 @@ impl DhcpSocket {
         };
 
         unsafe {
-            dump_pkg(eth_pkg);
-            println!(
-                "sent: {} bytes",
-                libc::sendto(
-                    self.raw_fd,
-                    eth_pkg.as_ptr() as *mut libc::c_void,
-                    eth_pkg.len(),
-                    0, // flags
-                    addr_ptr as *mut libc::sockaddr,
-                    addr_buffer_size
-                )
+            log::debug!("Sending raw ethernet package: {:?}", eth_pkg);
+            let sent_bytes = libc::sendto(
+                self.raw_fd,
+                eth_pkg.as_ptr() as *mut libc::c_void,
+                eth_pkg.len(),
+                0, // flags
+                addr_ptr as *mut libc::sockaddr,
+                addr_buffer_size,
             );
-            println!("errno: {}", nix::errno::errno());
+            log::debug!("sent: {} bytes", sent_bytes);
+            if sent_bytes <= 0 {
+                log::debug!("errno: {}", nix::errno::errno());
+            }
         }
 
         Ok(())
@@ -80,8 +80,8 @@ impl DhcpSocket {
         };
 
         unsafe {
-            println!("receiving");
-            println!(
+            log::debug!("receiving");
+            log::debug!(
                 "recv: {} bytes",
                 libc::recvfrom(
                     self.raw_fd,
@@ -93,6 +93,7 @@ impl DhcpSocket {
                 )
             );
         }
+        log::debug!("received {:?}", buffer);
 
         DhcpV4Message::try_from(buffer.as_slice())
     }
@@ -101,7 +102,7 @@ impl DhcpSocket {
         let iface_index = config.iface_index as libc::c_int;
         let eth_protocol = libc::ETH_P_ALL;
         let raw_fd = create_raw_socket(eth_protocol)?;
-        println!("socket raw_fd is {}", raw_fd);
+        log::debug!("socket raw_fd is {}", raw_fd);
 
         bind_raw_socket(raw_fd, eth_protocol, iface_index, &config.iface_mac)?;
 
@@ -238,15 +239,3 @@ fn gen_send_fd(
     Ok(socket)
 }
 */
-
-fn dump_pkg(pkg: &[u8]) {
-    for (i, oct) in pkg.iter().enumerate() {
-        print!("{:02x} ", oct);
-        if i % 16 == 7 {
-            print!(" ");
-        } else if i % 16 == 15 {
-            println!();
-        }
-    }
-    println!();
-}

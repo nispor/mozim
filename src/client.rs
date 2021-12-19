@@ -9,7 +9,6 @@ const BROADCAST_MAC_ADDRESS: &str = "ff:ff:ff:ff:ff:ff";
 pub struct DhcpV4Client {
     config: DhcpV4Config,
     socket: DhcpSocket,
-    lease: DhcpV4Lease,
 }
 
 impl DhcpV4Client {
@@ -48,7 +47,7 @@ impl DhcpV4Client {
         })
     }
 
-    pub fn run(&self) -> Result<DhcpV4Lease, DhcpError> {
+    pub fn run(&self, lease: &DhcpV4Lease) -> Result<DhcpV4Lease, DhcpError> {
         todo!()
     }
 }

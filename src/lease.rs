@@ -34,6 +34,7 @@ impl std::convert::TryFrom<&v4::Message> for DhcpV4Lease {
         ret.cli_ip = v4_dhcp_msg.yiaddr().to_string();
         for (_, dhcp_opt) in v4_dhcp_msg.opts().iter() {
             match dhcp_opt {
+                DhcpOption::MessageType(_) => (),
                 DhcpOption::Renewal(v) => {
                     ret.t1_renew = *v;
                 }

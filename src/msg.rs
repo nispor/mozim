@@ -26,11 +26,12 @@ pub enum DhcpV4MessageType {
     Decline,
     Release,
     Inform,
+    Unknown,
 }
 
 impl Default for DhcpV4MessageType {
     fn default() -> Self {
-        Self::Discovery
+        Self::Unknown
     }
 }
 
@@ -168,9 +169,25 @@ impl std::convert::TryFrom<&[u8]> for DhcpV4Message {
             e
         })?;
 
+        let msg_type = match v4_dhcp_msg.opts().get(v4::OptionCode::MessageType)
+        {
+            Some(v4::DhcpOption::MessageType(v4::MessageType::Offer)) => {
+                DhcpV4MessageType::Offer
+            }
+            Some(t) => {
+                log::debug!("Unknown dhcp message type {:?}", t);
+                DhcpV4MessageType::Unknown
+            }
+            None => {
+                log::debug!("Got no dhcp message type");
+                DhcpV4MessageType::Unknown
+            }
+        };
+
         Ok(Self {
             srv_mac: u8_array_to_mac_string(&eth_hdr.source),
             lease: Some(DhcpV4Lease::try_from(&v4_dhcp_msg)?),
+            msg_type,
             ..Default::default()
         })
     }
