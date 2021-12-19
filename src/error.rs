@@ -1,6 +1,8 @@
 #[derive(Debug, PartialEq, Clone)]
 pub enum ErrorKind {
     InvalidArgument,
+    InvalidDhcpServerReply,
+    NoLease,
     Bug,
 }
 
@@ -12,10 +14,7 @@ pub struct DhcpError {
 
 impl DhcpError {
     pub fn new(kind: ErrorKind, msg: String) -> Self {
-        Self {
-            kind: kind,
-            msg: msg,
-        }
+        Self { kind, msg }
     }
 }
 

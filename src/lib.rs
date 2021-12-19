@@ -1,10 +1,14 @@
 mod bpf;
-mod dhcp_msg;
+mod client;
+mod config;
 mod error;
-mod socket;
-mod traits;
+mod lease;
 mod mac;
+mod msg;
+mod socket;
 
+pub use crate::client::DhcpV4Client;
+pub use crate::config::DhcpV4Config;
 pub use crate::error::{DhcpError, ErrorKind};
-pub use crate::socket::DhcpSocket;
-pub use crate::traits::Emitable;
+pub use crate::lease::DhcpV4Lease;
+pub use crate::msg::{DhcpV4Message, DhcpV4MessageType};
