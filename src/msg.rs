@@ -35,6 +35,26 @@ impl Default for DhcpV4MessageType {
     }
 }
 
+impl std::fmt::Display for DhcpV4MessageType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{:?}",
+            match self {
+                Self::Discovery => "discovery",
+                Self::Offer => "offer",
+                Self::Request => "request",
+                Self::Ack => "ack",
+                Self::Nack => "nack",
+                Self::Decline => "decline",
+                Self::Release => "release",
+                Self::Inform => "inform",
+                Self::Unknown => "unknown",
+            }
+        )
+    }
+}
+
 #[derive(Debug, PartialEq, Clone, Default)]
 pub struct DhcpV4Message {
     pub msg_type: DhcpV4MessageType,
@@ -80,19 +100,31 @@ impl DhcpV4Message {
             dhcp_msg
                 .opts_mut()
                 .insert(v4::DhcpOption::MessageType(v4::MessageType::Discover));
+        } else if self.msg_type == DhcpV4MessageType::Request {
             dhcp_msg
                 .opts_mut()
-                .insert(v4::DhcpOption::ParameterRequestList(vec![
-                    v4::OptionCode::Hostname,
-                    v4::OptionCode::SubnetMask,
-                    v4::OptionCode::Router,
-                    v4::OptionCode::DomainNameServer,
-                    v4::OptionCode::DomainName,
-                    v4::OptionCode::InterfaceMtu,
-                    v4::OptionCode::NTPServers,
-                ]));
-        } else if self.msg_type == DhcpV4MessageType::Request {
-            todo!()
+                .insert(v4::DhcpOption::MessageType(v4::MessageType::Request));
+            if let Some(lease) = self.lease.as_ref() {
+                if let Some(srv_id) = lease.srv_id {
+                    dhcp_msg
+                        .opts_mut()
+                        .insert(v4::DhcpOption::ServerIdentifier(srv_id));
+                }
+                if let Some(cli_ip) = lease.yiaddr {
+                    dhcp_msg
+                        .opts_mut()
+                        .insert(v4::DhcpOption::RequestedIpAddress(cli_ip));
+                }
+            } else {
+                let e = DhcpError::new(
+                    ErrorKind::InvalidArgument,
+                    "No DHCP lease found for DHCP request, \
+                    please run DhcpV4Message::load_lease() first"
+                        .to_string(),
+                );
+                log::error!("{}", e);
+                return Err(e);
+            }
         } else {
             let e = DhcpError::new(
                 ErrorKind::InvalidArgument,
@@ -102,9 +134,23 @@ impl DhcpV4Message {
             return Err(e);
         }
 
+        dhcp_msg
+            .opts_mut()
+            .insert(v4::DhcpOption::ParameterRequestList(vec![
+                v4::OptionCode::Hostname,
+                v4::OptionCode::SubnetMask,
+                v4::OptionCode::Router,
+                v4::OptionCode::DomainNameServer,
+                v4::OptionCode::DomainName,
+                v4::OptionCode::InterfaceMtu,
+                v4::OptionCode::NTPServers,
+            ]));
+
         dhcp_msg.opts_mut().insert(v4::DhcpOption::ClientIdentifier(
             self.config.client_id.clone(),
         ));
+
+        log::debug!("DHCP message {:?}", dhcp_msg);
 
         let mut dhcp_msg_buff = Vec::new();
         let mut e = v4::Encoder::new(&mut dhcp_msg_buff);
@@ -174,6 +220,9 @@ impl std::convert::TryFrom<&[u8]> for DhcpV4Message {
             Some(v4::DhcpOption::MessageType(v4::MessageType::Offer)) => {
                 DhcpV4MessageType::Offer
             }
+            Some(v4::DhcpOption::MessageType(v4::MessageType::Ack)) => {
+                DhcpV4MessageType::Ack
+            }
             Some(t) => {
                 log::debug!("Unknown dhcp message type {:?}", t);
                 DhcpV4MessageType::Unknown
@@ -183,13 +232,14 @@ impl std::convert::TryFrom<&[u8]> for DhcpV4Message {
                 DhcpV4MessageType::Unknown
             }
         };
-
-        Ok(Self {
+        let ret = Self {
             srv_mac: u8_array_to_mac_string(&eth_hdr.source),
             lease: Some(DhcpV4Lease::try_from(&v4_dhcp_msg)?),
             msg_type,
             ..Default::default()
-        })
+        };
+        log::debug!("Got reply DHCP message {:?}", ret);
+        Ok(ret)
     }
 }
 

@@ -53,3 +53,9 @@ impl From<etherparse::WriteError> for DhcpError {
         Self::new(ErrorKind::Bug, format!("etherparse protocol error: {}", e))
     }
 }
+
+impl From<std::net::AddrParseError> for DhcpError {
+    fn from(e: std::net::AddrParseError) -> Self {
+        Self::new(ErrorKind::Bug, format!("IPv4 address parse error: {}", e))
+    }
+}
