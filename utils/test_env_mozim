@@ -1,0 +1,37 @@
+#!/bin/bash -x
+
+PID_FILE="/tmp/test_dnsmasq.pid"
+IPV4_BLOCK="192.0.3"
+DHCP_SRV_IP="${IPV4_BLOCK}.1"
+
+if [ -e $PID_FILE ];then
+    sudo kill `cat $PID_FILE`
+fi
+
+if [[ $1 ]]; then
+    sudo ip link del eth1
+    sudo ip netns del mozim
+    exit
+fi
+
+sudo ip netns add mozim
+sudo ip link add eth1 type veth peer name eth1.ep
+sudo ip link set eth1 up
+sudo ip link set eth1.ep netns mozim
+sudo ip netns exec mozim ip link set eth1.ep up
+sudo ip netns exec mozim ip addr add ${DHCP_SRV_IP}/24 dev eth1.ep
+sudo ip netns exec mozim dnsmasq \
+    --pid-file=$PID_FILE \
+    --conf-file=/dev/null \
+    --no-hosts \
+    --dhcp-host=dummy-host,${IPV4_BLOCK}.99 \
+    --dhcp-option=option:dns-server,8.8.8.8,1.1.1.1 \
+    --dhcp-option=option:mtu,1492 \
+    --dhcp-option=option:domain-name,example.com\
+    --dhcp-option=option:ntp-server,${DHCP_SRV_IP} \
+    --keep-in-foreground \
+    --bind-interfaces \
+    --except-interface=lo \
+    --clear-on-reload \
+    --listen-address=$DHCP_SRV_IP \
+    --dhcp-range=${IPV4_BLOCK}.2,${IPV4_BLOCK}.50,60 --no-ping &
