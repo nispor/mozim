@@ -31,22 +31,20 @@ fn main() {
 }
 
 fn apply_dhcp_ip(iface_name: &str, lease: &DhcpV4Lease) {
-    let ifaces = Some(vec![IfaceConf {
-        name: iface_name.to_string(),
-        state: IfaceState::Up,
-        ipv4: Some(IpConf {
-            addresses: vec![IpAddrConf {
-                address: lease.yiaddr.to_string(),
-                prefix_len: get_prefix_len(&lease.subnet_mask),
-                valid_lft: format!("{}sec", lease.lease_time),
-                preferred_lft: format!("{}sec", lease.lease_time),
-                ..Default::default()
-            }],
-            ..Default::default()
-        }),
-        ..Default::default()
-    }]);
-    NetConf { ifaces }.apply().unwrap();
+    let mut ip_addr_conf = IpAddrConf::default();
+    ip_addr_conf.address = lease.yiaddr.to_string();
+    ip_addr_conf.prefix_len = get_prefix_len(&lease.subnet_mask);
+    ip_addr_conf.valid_lft = format!("{}sec", lease.lease_time);
+    ip_addr_conf.preferred_lft = format!("{}sec", lease.lease_time);
+    let mut ip_conf = IpConf::default();
+    ip_conf.addresses = vec![ip_addr_conf];
+    let mut iface_conf = IfaceConf::default();
+    iface_conf.name = iface_name.to_string();
+    iface_conf.state = IfaceState::Up;
+    iface_conf.ipv4 = Some(ip_conf);
+    let mut net_conf = NetConf::default();
+    net_conf.ifaces = Some(vec![iface_conf]);
+    net_conf.apply().unwrap();
 }
 
 fn get_prefix_len(ip: &std::net::Ipv4Addr) -> u8 {

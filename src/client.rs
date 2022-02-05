@@ -23,11 +23,16 @@ enum DhcpV4Phase {
 #[derive(Debug, PartialEq, Clone, Default)]
 pub struct DhcpV4Client {
     config: DhcpV4Config,
+    last_renew_time: Option<BootTime>,
+    last_rebind_time: Option<BootTime>,
 }
 
 impl DhcpV4Client {
     pub fn new(config: DhcpV4Config) -> Self {
-        Self { config }
+        Self {
+            config,
+            ..Default::default()
+        }
     }
 
     pub fn request(
