@@ -1,3 +1,7 @@
+use std::ffi::CString;
+use std::net::{Ipv4Addr, UdpSocket};
+use std::os::unix::io::AsRawFd;
+
 use crate::{
     bpf::apply_dhcp_bpf, mac::mac_address_to_eth_mac_bytes, DhcpError,
     DhcpV4Config, DhcpV4Message, ErrorKind,
@@ -28,9 +32,52 @@ impl Drop for DhcpSocket {
 }
 
 impl DhcpSocket {
-    pub(crate) fn send(
+    pub(crate) fn send_unicast(
         &self,
-        iface_index: i32,
+        src_ip: &Ipv4Addr,
+        dst_ip: &Ipv4Addr,
+        pkg: &[u8],
+    ) -> Result<(), DhcpError> {
+        println!("src ip {:?}", src_ip);
+        let udp_socket = UdpSocket::bind(&format!(
+            "{}:{}",
+            src_ip,
+            0 // Use random source port
+        ))?;
+        log::debug!("UDP socket bind to {:?}", udp_socket);
+        let iface_name_cstr = CString::new(self.config.iface_name.as_str())?;
+
+        unsafe {
+            let rc = libc::setsockopt(
+                udp_socket.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_BINDTODEVICE,
+                iface_name_cstr.as_ptr() as *const libc::c_void,
+                std::mem::size_of::<CString>() as libc::socklen_t,
+            );
+            if rc != 0 {
+                let e = DhcpError::new(
+                    ErrorKind::Bug,
+                    format!(
+                        "Failed to bind socket to interface {} with error: {}",
+                        self.config.iface_name, rc
+                    ),
+                );
+                log::error!("{}", e);
+                return Err(e);
+            }
+        }
+        udp_socket.connect(&format!(
+            "{}:{}",
+            dst_ip,
+            dhcproto::v4::SERVER_PORT
+        ))?;
+        udp_socket.send(pkg)?;
+        Ok(())
+    }
+
+    pub(crate) fn send_raw(
+        &self,
         dst_mac_addr: &str,
         eth_pkg: &[u8],
     ) -> Result<(), DhcpError> {
@@ -39,7 +86,7 @@ impl DhcpSocket {
 
         dst_addr.sll_addr[..libc::ETH_ALEN as usize]
             .clone_from_slice(&mac_address_to_eth_mac_bytes(dst_mac_addr)?);
-        dst_addr.sll_ifindex = iface_index;
+        dst_addr.sll_ifindex = self.config.iface_index as i32;
         let addr_buffer_size: libc::socklen_t =
             std::mem::size_of::<libc::sockaddr_ll>() as libc::socklen_t;
         let addr_ptr = unsafe {

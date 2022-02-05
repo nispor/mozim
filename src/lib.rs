@@ -6,6 +6,7 @@ mod lease;
 mod mac;
 mod msg;
 mod socket;
+mod time;
 
 pub use crate::client::DhcpV4Client;
 pub use crate::config::DhcpV4Config;

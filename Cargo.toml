@@ -14,7 +14,7 @@ path = "src/mzc.rs"
 [dependencies]
 rand = "0.8.4"
 libc = "0.2.112"
-nispor = "1.2.2"
+nispor = { git = "https://github.com/nispor/nispor" }
 byteorder = "1.4.3"
 dhcproto = "0.5.0"
 log = "0.4.14"

@@ -5,13 +5,11 @@ Check again in 2022.
 
 DONE:
  * raw socket with BPF applied and accepting all mac address.
- * Send DHCP discovery package
+ * DHCP discovery and request.
 
 TODO:
- * Parse DHCP ACK
- * Send DHCP REQUEST
- * Better external API
-
+ * Verify XID.
+ * Renew, rebind.
 
 # Try out
 

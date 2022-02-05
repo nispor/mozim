@@ -1,90 +1,36 @@
 use crate::{DhcpError, ErrorKind};
 
-const DHCP_BPF_LEN: u16 = 13;
+const DHCP_BPF_LEN: u16 = 11;
+
+// Using the output of `tcpdump -dd 'ip and udp dst port 68'`
+const BPF_FILTER_RAW: [(u16, u8, u8, u32); DHCP_BPF_LEN as usize] = [
+    (0x28, 0, 0, 0x0000000c),
+    (0x15, 0, 8, 0x00000800),
+    (0x30, 0, 0, 0x00000017),
+    (0x15, 0, 6, 0x00000011),
+    (0x28, 0, 0, 0x00000014),
+    (0x45, 4, 0, 0x00001fff),
+    (0xb1, 0, 0, 0x0000000e),
+    (0x48, 0, 0, 0x00000010),
+    (0x15, 0, 1, 0x00000044),
+    (0x6, 0, 0, 0x00040000),
+    (0x6, 0, 0, 0x00000000),
+];
 
 pub(crate) fn apply_dhcp_bpf(fd: libc::c_int) -> Result<(), DhcpError> {
-    // Using the output of `tcpdump -dd 'ip and udp port 67'`
-    let raw_filters: [libc::sock_filter; DHCP_BPF_LEN as usize] = [
-        libc::sock_filter {
-            code: 0x28,
-            jt: 0,
-            jf: 0,
-            k: 0x0000000c,
-        },
-        libc::sock_filter {
-            code: 0x15,
-            jt: 0,
-            jf: 10,
-            k: 0x00000800,
-        },
-        libc::sock_filter {
-            code: 0x30,
-            jt: 0,
-            jf: 0,
-            k: 0x00000017,
-        },
-        libc::sock_filter {
-            code: 0x15,
-            jt: 0,
-            jf: 8,
-            k: 0x00000011,
-        },
-        libc::sock_filter {
-            code: 0x28,
-            jt: 0,
-            jf: 0,
-            k: 0x00000014,
-        },
-        libc::sock_filter {
-            code: 0x45,
-            jt: 6,
-            jf: 0,
-            k: 0x00001fff,
-        },
-        libc::sock_filter {
-            code: 0xb1,
-            jt: 0,
-            jf: 0,
-            k: 0x0000000e,
-        },
-        libc::sock_filter {
-            code: 0x48,
-            jt: 0,
-            jf: 0,
-            k: 0x0000000e,
-        },
-        libc::sock_filter {
-            code: 0x15,
-            jt: 2,
-            jf: 0,
-            k: 0x00000043,
-        },
-        libc::sock_filter {
-            code: 0x48,
-            jt: 0,
-            jf: 0,
-            k: 0x00000010,
-        },
-        libc::sock_filter {
-            code: 0x15,
-            jt: 0,
-            jf: 1,
-            k: 0x00000043,
-        },
-        libc::sock_filter {
-            code: 0x6,
-            jt: 0,
-            jf: 0,
-            k: 0x00040000,
-        },
-        libc::sock_filter {
-            code: 0x6,
-            jt: 0,
-            jf: 0,
-            k: 0x00000000,
-        },
-    ];
-
+    let mut raw_filters = [libc::sock_filter {
+        code: 0,
+        jt: 0,
+        jf: 0,
+        k: 0,
+    }; DHCP_BPF_LEN as usize];
+    for (i, (code, jt, jf, k)) in BPF_FILTER_RAW.iter().enumerate() {
+        raw_filters[i].code = *code;
+        raw_filters[i].jt = *jt;
+        raw_filters[i].jf = *jf;
+        raw_filters[i].k = *k;
+    }
+    println!("{:?}", raw_filters);
     let bpf_filter = libc::sock_fprog {
         len: DHCP_BPF_LEN,
         filter: (&raw_filters).as_ptr() as *mut _,

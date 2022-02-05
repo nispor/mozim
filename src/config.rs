@@ -10,6 +10,7 @@ pub struct DhcpV4Config {
     pub(crate) iface_mac: String,
     pub(crate) client_id: Vec<u8>,
     pub(crate) host_name: String,
+    // TODO: Support allow list and deny list for DHCP servers.
 }
 
 impl DhcpV4Config {

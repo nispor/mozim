@@ -81,7 +81,7 @@ impl DhcpV4Message {
         self
     }
 
-    pub(crate) fn to_eth_pkg(&self) -> Result<Vec<u8>, DhcpError> {
+    pub(crate) fn to_dhcp_pkg(&self) -> Result<Vec<u8>, DhcpError> {
         let mut dhcp_msg = v4::Message::default();
         dhcp_msg.set_flags(v4::Flags::default());
 
@@ -105,16 +105,12 @@ impl DhcpV4Message {
                 .opts_mut()
                 .insert(v4::DhcpOption::MessageType(v4::MessageType::Request));
             if let Some(lease) = self.lease.as_ref() {
-                if let Some(srv_id) = lease.srv_id {
-                    dhcp_msg
-                        .opts_mut()
-                        .insert(v4::DhcpOption::ServerIdentifier(srv_id));
-                }
-                if let Some(cli_ip) = lease.yiaddr {
-                    dhcp_msg
-                        .opts_mut()
-                        .insert(v4::DhcpOption::RequestedIpAddress(cli_ip));
-                }
+                dhcp_msg
+                    .opts_mut()
+                    .insert(v4::DhcpOption::ServerIdentifier(lease.srv_id));
+                dhcp_msg
+                    .opts_mut()
+                    .insert(v4::DhcpOption::RequestedIpAddress(lease.yiaddr));
             } else {
                 let e = DhcpError::new(
                     ErrorKind::InvalidArgument,
@@ -155,6 +151,11 @@ impl DhcpV4Message {
         let mut dhcp_msg_buff = Vec::new();
         let mut e = v4::Encoder::new(&mut dhcp_msg_buff);
         dhcp_msg.encode(&mut e)?;
+        Ok(dhcp_msg_buff)
+    }
+
+    pub(crate) fn to_eth_pkg(&self) -> Result<Vec<u8>, DhcpError> {
+        let dhcp_msg_buff = self.to_dhcp_pkg()?;
         gen_eth_pkg(
             &self.config.iface_mac,
             if self.srv_mac.is_empty() {
