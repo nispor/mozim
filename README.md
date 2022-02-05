@@ -17,6 +17,6 @@ TODO:
 # Below script will create veth eth1/eth1.ep.
 # The `eth1.ep` is DHCP server interface running dnsmasq in `mozim` network
 # namespace.
-sudo ./utils/test_env_mozim
+sudo ./utils/test_env_mozim &
 cargo run
 ```
