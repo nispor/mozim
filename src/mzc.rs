@@ -9,19 +9,20 @@ fn main() {
     let mut config = DhcpV4Config::new("eth1").unwrap();
     config.set_host_name("Gris-Laptop");
     config.use_host_name_as_client_id();
-    let cli = DhcpV4Client::new(config);
+    let mut cli = DhcpV4Client::new(config);
 
-    let lease = cli.request(None).unwrap();
+    let mut lease = cli.request(None).unwrap();
 
     println!("Got lease {:?}", lease);
     apply_dhcp_ip("eth1", &lease);
 
     loop {
         match cli.run(&lease) {
-            Ok(lease) => {
-                println!("new lease {:?}", lease);
+            Ok(l) => {
+                println!("new lease {:?}", l);
+                apply_dhcp_ip("eth1", &l);
+                lease = l;
             }
-
             Err(e) => {
                 println!("error {:?}", e);
                 break;

@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use crate::{
-    socket::DhcpSocket, time::BootTime, DhcpError, DhcpV4Config, DhcpV4Lease,
-    DhcpV4Message, DhcpV4MessageType, ErrorKind,
+    socket::DhcpSocket, DhcpError, DhcpV4Config, DhcpV4Lease, DhcpV4Message,
+    DhcpV4MessageType, ErrorKind,
 };
 
 const BROADCAST_MAC_ADDRESS: &str = "ff:ff:ff:ff:ff:ff";
@@ -23,8 +23,13 @@ enum DhcpV4Phase {
 #[derive(Debug, PartialEq, Clone, Default)]
 pub struct DhcpV4Client {
     config: DhcpV4Config,
-    last_renew_time: Option<BootTime>,
-    last_rebind_time: Option<BootTime>,
+    // We store these information to ensure we does not do more than twice
+    // renew or rebind per RFC 2131 even when user run `DhcpV4Client::run()`
+    // multiple times
+    renew_failed: bool,
+    renew2_failed: bool,
+    rebind_failed: bool,
+    rebind2_failed: bool,
 }
 
 impl DhcpV4Client {
@@ -162,12 +167,14 @@ impl DhcpV4Client {
     // remaining time until T2 (in RENEWING state) and one-half of the remaining
     // lease time (in REBINDING state), down to a minimum of 60 seconds, before
     // retransmitting the DHCPREQUEST message.
-    pub fn run(&self, lease: &DhcpV4Lease) -> Result<DhcpV4Lease, DhcpError> {
-        let mut lease = lease.clone();
+    pub fn run(
+        &mut self,
+        lease: &DhcpV4Lease,
+    ) -> Result<DhcpV4Lease, DhcpError> {
         let mut previous_phase = DhcpV4Phase::PreRenew;
         loop {
-            let phase = get_cur_phase(&lease)?;
-            log::debug!("Current DHCP pharse {:?}", phase);
+            let phase = get_cur_phase(lease)?;
+            log::debug!("Current DHCP phase {:?}", phase);
             if phase == previous_phase {
                 std::thread::sleep(Duration::from_secs(LEASE_CHECK_INTERNAL));
                 continue;
@@ -175,30 +182,97 @@ impl DhcpV4Client {
             previous_phase = phase;
             match phase {
                 DhcpV4Phase::PreRenew => (),
-                DhcpV4Phase::Renewing | DhcpV4Phase::Renewing2 => match self
-                    .renew(&lease)
-                {
-                    Ok(l) => {
-                        log::debug!("DHCP lease renewed, new lease {:?}", l);
-                        lease = l;
-                    }
-                    Err(e) => {
-                        log::debug!("DHCP renew failed, will rebind: {:?}", e);
-                    }
-                },
-                DhcpV4Phase::Rebinding | DhcpV4Phase::Rebinding2 => {
-                    match self.rebind(&lease) {
-                        Ok(l) => {
-                            log::debug!(
-                                "DHCP lease rebind done, new lease {:?}",
-                                l
-                            );
-                            lease = l;
+                DhcpV4Phase::Renewing => {
+                    if !self.renew_failed {
+                        match self.renew(lease) {
+                            Ok(l) => {
+                                log::debug!(
+                                    "DHCP lease renewed, new lease {:?}",
+                                    l
+                                );
+                                self.renew_failed = false;
+                                self.renew2_failed = false;
+                                self.rebind_failed = false;
+                                self.rebind2_failed = false;
+                                return Ok(l);
+                            }
+                            Err(e) => {
+                                log::debug!(
+                                    "DHCP renew failed, will retry: {:?}",
+                                    e
+                                );
+                                self.renew_failed = true;
+                            }
                         }
-                        Err(_) => {
-                            log::error!(
-                                "DHCP rebind failed, will fail on lease expire"
-                            );
+                    }
+                }
+                DhcpV4Phase::Renewing2 => {
+                    if !self.renew2_failed {
+                        match self.renew(lease) {
+                            Ok(l) => {
+                                log::debug!(
+                                    "DHCP lease renewed, new lease {:?}",
+                                    l
+                                );
+                                self.renew_failed = false;
+                                self.renew2_failed = false;
+                                self.rebind_failed = false;
+                                self.rebind2_failed = false;
+                                return Ok(l);
+                            }
+                            Err(e) => {
+                                log::debug!(
+                                    "DHCP second renew failed, will rebind: \
+                                    {:?}",
+                                    e
+                                );
+                                self.renew2_failed = true;
+                            }
+                        }
+                    }
+                }
+                DhcpV4Phase::Rebinding => {
+                    if !self.rebind_failed {
+                        match self.rebind(lease) {
+                            Ok(l) => {
+                                log::debug!(
+                                    "DHCP lease rebind done, new lease {:?}",
+                                    l
+                                );
+                                self.renew_failed = false;
+                                self.renew2_failed = false;
+                                self.rebind_failed = false;
+                                self.rebind2_failed = false;
+                                return Ok(l);
+                            }
+                            Err(_) => {
+                                log::error!("DHCP rebind failed, will retry");
+                                self.rebind_failed = true;
+                            }
+                        }
+                    }
+                }
+                DhcpV4Phase::Rebinding2 => {
+                    if !self.rebind2_failed {
+                        match self.rebind(lease) {
+                            Ok(l) => {
+                                log::debug!(
+                                    "DHCP lease rebind done, new lease {:?}",
+                                    l
+                                );
+                                self.renew_failed = false;
+                                self.renew2_failed = false;
+                                self.rebind_failed = false;
+                                self.rebind2_failed = false;
+                                return Ok(l);
+                            }
+                            Err(_) => {
+                                log::error!(
+                                    "DHCP rebind second call failed, \
+                                    will fail on lease expire"
+                                );
+                                self.rebind2_failed = true;
+                            }
                         }
                     }
                 }
