@@ -4,24 +4,25 @@ use std::os::unix::io::AsRawFd;
 
 use crate::{
     bpf::apply_dhcp_bpf, mac::mac_address_to_eth_mac_bytes, DhcpError,
-    DhcpV4Config, DhcpV4Message, ErrorKind,
+    DhcpV4Config, ErrorKind,
 };
 
+const BROADCAST_MAC_ADDRESS: &str = "ff:ff:ff:ff:ff:ff";
 const PACKET_HOST: u8 = 0; // a packet addressed to the local host
 
 #[derive(Debug, PartialEq, Clone, Default)]
-pub(crate) struct DhcpSocket {
-    raw_fd: libc::c_int,
+pub(crate) struct DhcpRawSocket {
     config: DhcpV4Config,
+    raw_fd: libc::c_int,
 }
 
-impl std::os::unix::io::AsRawFd for DhcpSocket {
+impl std::os::unix::io::AsRawFd for DhcpRawSocket {
     fn as_raw_fd(&self) -> std::os::unix::io::RawFd {
         self.raw_fd as std::os::unix::io::RawFd
     }
 }
 
-impl Drop for DhcpSocket {
+impl Drop for DhcpRawSocket {
     fn drop(&mut self) {
         if self.raw_fd >= 0 {
             unsafe {
@@ -31,59 +32,30 @@ impl Drop for DhcpSocket {
     }
 }
 
-impl DhcpSocket {
-    pub(crate) fn send_unicast(
+impl DhcpRawSocket {
+    pub(crate) fn send_recv(
         &self,
-        src_ip: &Ipv4Addr,
-        dst_ip: &Ipv4Addr,
-        pkg: &[u8],
-    ) -> Result<(), DhcpError> {
-        println!("src ip {:?}", src_ip);
-        let udp_socket = UdpSocket::bind(&format!(
-            "{}:{}",
-            src_ip,
-            0 // Use random source port
-        ))?;
-        log::debug!("UDP socket bind to {:?}", udp_socket);
-        let iface_name_cstr = CString::new(self.config.iface_name.as_str())?;
-
-        unsafe {
-            let rc = libc::setsockopt(
-                udp_socket.as_raw_fd(),
-                libc::SOL_SOCKET,
-                libc::SO_BINDTODEVICE,
-                iface_name_cstr.as_ptr() as *const libc::c_void,
-                std::mem::size_of::<CString>() as libc::socklen_t,
+        eth_pkg: &[u8],
+    ) -> Result<Vec<u8>, DhcpError> {
+        if self.raw_fd < 0 {
+            let e = DhcpError::new(
+                ErrorKind::Bug,
+                "Please run DhcpSocket::open_raw() first".to_string(),
             );
-            if rc != 0 {
-                let e = DhcpError::new(
-                    ErrorKind::Bug,
-                    format!(
-                        "Failed to bind socket to interface {} with error: {}",
-                        self.config.iface_name, rc
-                    ),
-                );
-                log::error!("{}", e);
-                return Err(e);
-            }
+            log::error!("{}", e);
+            return Err(e);
         }
-        udp_socket.connect(&format!(
-            "{}:{}",
-            dst_ip,
-            dhcproto::v4::SERVER_PORT
-        ))?;
-        udp_socket.send(pkg)?;
-        Ok(())
+        self.send_raw(BROADCAST_MAC_ADDRESS, eth_pkg)?;
+        self.recv_raw()
     }
 
-    pub(crate) fn send_raw(
+    fn send_raw(
         &self,
         dst_mac_addr: &str,
         eth_pkg: &[u8],
     ) -> Result<(), DhcpError> {
         let mut dst_addr: libc::sockaddr_ll = unsafe { std::mem::zeroed() };
         dst_addr.sll_halen = libc::ETH_ALEN as u8;
-
         dst_addr.sll_addr[..libc::ETH_ALEN as usize]
             .clone_from_slice(&mac_address_to_eth_mac_bytes(dst_mac_addr)?);
         dst_addr.sll_ifindex = self.config.iface_index as i32;
@@ -105,18 +77,17 @@ impl DhcpSocket {
                 addr_ptr as *mut libc::sockaddr,
                 addr_buffer_size,
             );
-            log::debug!("sent: {} bytes", sent_bytes);
+            log::debug!("Raw socket sent: {} bytes", sent_bytes);
             if sent_bytes <= 0 {
-                log::debug!("errno: {}", nix::errno::errno());
+                log::debug!("Raw socket sent errno: {}", nix::errno::errno());
             }
         }
-
         Ok(())
     }
 
-    pub fn recv_dhcpv4_reply(&self) -> Result<DhcpV4Message, DhcpError> {
+    fn recv_raw(&self) -> Result<Vec<u8>, DhcpError> {
         let mut src_addr: libc::sockaddr_ll = unsafe { std::mem::zeroed() };
-        // TODO: Use iface MTU
+        // TODO: Add support of `Maximum DHCP Message Size` option
         let mut buffer = [0u8; 1500];
         let mut addr_buffer_size: libc::socklen_t =
             std::mem::size_of::<libc::sockaddr_ll>() as libc::socklen_t;
@@ -127,9 +98,9 @@ impl DhcpSocket {
         };
 
         unsafe {
-            log::debug!("receiving");
+            log::debug!("Raw socket receiving");
             log::debug!(
-                "recv: {} bytes",
+                "Raw socket recv: {} bytes",
                 libc::recvfrom(
                     self.raw_fd,
                     buffer.as_mut_ptr() as *mut libc::c_void,
@@ -140,24 +111,21 @@ impl DhcpSocket {
                 )
             );
         }
-        log::debug!("received {:?}", buffer);
-
-        DhcpV4Message::try_from(buffer.as_slice())
+        log::debug!("Raw socket received {:?}", buffer);
+        Ok(buffer.to_vec())
     }
 
-    pub fn new(config: &DhcpV4Config) -> Result<Self, DhcpError> {
+    pub(crate) fn new(config: &DhcpV4Config) -> Result<Self, DhcpError> {
         let iface_index = config.iface_index as libc::c_int;
         let eth_protocol = libc::ETH_P_ALL;
         let raw_fd = create_raw_socket(eth_protocol)?;
-        log::debug!("socket raw_fd is {}", raw_fd);
-
         bind_raw_socket(raw_fd, eth_protocol, iface_index, &config.iface_mac)?;
 
         accept_all_mac_address(raw_fd, iface_index)?;
 
         apply_dhcp_bpf(raw_fd)?;
-
-        Ok(DhcpSocket {
+        log::debug!("Raw socket created {}", raw_fd);
+        Ok(DhcpRawSocket {
             raw_fd,
             config: config.clone(),
         })
@@ -256,33 +224,54 @@ fn bind_raw_socket(
     }
 }
 
-/*
-fn gen_send_fd(
-    src_ip: &str,
-    src_port: u16,
-    iface_name: &str,
-) -> Result<UdpSocket, DhcpError> {
-    let socket = UdpSocket::bind(&format!("{}:{}", src_ip, src_port))?;
-    let iface_name_cstr = CString::new(iface_name)?;
+#[derive(Debug, PartialEq, Clone, Default)]
+pub(crate) struct DhcpUdpSocket {}
 
-    unsafe {
-        let rc = libc::setsockopt(
-            socket.as_raw_fd(),
-            libc::SOL_SOCKET,
-            libc::SO_BINDTODEVICE,
-            iface_name_cstr.as_ptr() as *const libc::c_void,
-            std::mem::size_of::<CString>() as libc::socklen_t,
-        );
-        if rc != 0 {
-            return Err(DhcpError::new(
-                ErrorKind::Bug,
-                format!(
-                    "Failed to bind socket to interface {} with error: {}",
-                    iface_name, rc
-                ),
-            ));
+impl DhcpUdpSocket {
+    pub(crate) fn send_recv(
+        iface_name: &str,
+        src_ip: &Ipv4Addr,
+        dst_ip: &Ipv4Addr,
+        pkg: &[u8],
+    ) -> Result<Vec<u8>, DhcpError> {
+        println!("src ip {:?}", src_ip);
+        let udp_socket = UdpSocket::bind(&format!(
+            "{}:{}",
+            src_ip,
+            0 // Use random source port
+        ))?;
+        log::debug!("UDP socket bind to {:?}", udp_socket);
+        let iface_name_cstr = CString::new(iface_name)?;
+
+        unsafe {
+            let rc = libc::setsockopt(
+                udp_socket.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_BINDTODEVICE,
+                iface_name_cstr.as_ptr() as *const libc::c_void,
+                std::mem::size_of::<CString>() as libc::socklen_t,
+            );
+            if rc != 0 {
+                let e = DhcpError::new(
+                    ErrorKind::Bug,
+                    format!(
+                        "Failed to bind socket to interface {} with error: {}",
+                        iface_name, rc
+                    ),
+                );
+                log::error!("{}", e);
+                return Err(e);
+            }
         }
+        udp_socket.connect(&format!(
+            "{}:{}",
+            dst_ip,
+            dhcproto::v4::SERVER_PORT
+        ))?;
+        udp_socket.send(pkg)?;
+        // TODO: Add support of `Maximum DHCP Message Size` option
+        let mut buffer = [0u8; 1500];
+        udp_socket.recv(&mut buffer)?;
+        Ok(buffer.to_vec())
     }
-    Ok(socket)
 }
-*/

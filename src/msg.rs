@@ -3,15 +3,9 @@ use std::net::Ipv4Addr;
 use dhcproto::{v4, Decodable, Decoder, Encodable};
 
 use crate::{
-    mac::{
-        mac_address_to_eth_mac_bytes, mac_str_to_u8_array,
-        u8_array_to_mac_string,
-    },
+    mac::{mac_address_to_eth_mac_bytes, mac_str_to_u8_array},
     DhcpError, DhcpV4Config, DhcpV4Lease, ErrorKind,
 };
-
-// RFC 2131
-const CHADDR_LEN: usize = 16;
 
 const BROADCAST_MAC_ADDRESS: &str = "ff:ff:ff:ff:ff:ff";
 const DEFAULT_TTL: u8 = 128;
@@ -60,7 +54,7 @@ pub struct DhcpV4Message {
     pub msg_type: DhcpV4MessageType,
     pub lease: Option<DhcpV4Lease>,
     pub config: DhcpV4Config,
-    srv_mac: String,
+    renew_or_rebind: bool,
 }
 
 impl DhcpV4Message {
@@ -69,15 +63,17 @@ impl DhcpV4Message {
             msg_type,
             config: config.clone(),
             lease: None,
-            srv_mac: "".into(),
+            renew_or_rebind: false,
         }
     }
 
     pub fn load_lease(&mut self, lease: DhcpV4Lease) -> &mut Self {
         self.lease = Some(lease);
-        if self.msg_type == DhcpV4MessageType::Discovery {
-            self.msg_type = DhcpV4MessageType::Request;
-        }
+        self
+    }
+
+    pub(crate) fn renew_or_rebind(&mut self, value: bool) -> &mut Self {
+        self.renew_or_rebind = value;
         self
     }
 
@@ -90,10 +86,9 @@ impl DhcpV4Message {
         }
 
         if !self.config.iface_mac.as_str().is_empty() {
-            let mut mac_bytes =
-                mac_str_to_u8_array(self.config.iface_mac.as_str());
-            mac_bytes.resize(CHADDR_LEN, 0);
-            dhcp_msg.set_chaddr(&mac_bytes);
+            dhcp_msg.set_chaddr(&mac_str_to_u8_array(
+                self.config.iface_mac.as_str(),
+            ));
         }
 
         if self.msg_type == DhcpV4MessageType::Discovery {
@@ -105,12 +100,16 @@ impl DhcpV4Message {
                 .opts_mut()
                 .insert(v4::DhcpOption::MessageType(v4::MessageType::Request));
             if let Some(lease) = self.lease.as_ref() {
-                dhcp_msg
-                    .opts_mut()
-                    .insert(v4::DhcpOption::ServerIdentifier(lease.srv_id));
-                dhcp_msg
-                    .opts_mut()
-                    .insert(v4::DhcpOption::RequestedIpAddress(lease.yiaddr));
+                if self.renew_or_rebind {
+                    dhcp_msg.set_ciaddr(lease.yiaddr);
+                } else {
+                    dhcp_msg
+                        .opts_mut()
+                        .insert(v4::DhcpOption::ServerIdentifier(lease.siaddr));
+                    dhcp_msg.opts_mut().insert(
+                        v4::DhcpOption::RequestedIpAddress(lease.yiaddr),
+                    );
+                }
             } else {
                 let e = DhcpError::new(
                     ErrorKind::InvalidArgument,
@@ -145,6 +144,11 @@ impl DhcpV4Message {
         dhcp_msg.opts_mut().insert(v4::DhcpOption::ClientIdentifier(
             self.config.client_id.clone(),
         ));
+        if self.config.use_host_name_as_client_id {
+            dhcp_msg.opts_mut().insert(v4::DhcpOption::Hostname(
+                self.config.host_name.clone(),
+            ));
+        }
 
         log::debug!("DHCP message {:?}", dhcp_msg);
 
@@ -154,67 +158,20 @@ impl DhcpV4Message {
         Ok(dhcp_msg_buff)
     }
 
-    pub(crate) fn to_eth_pkg(&self) -> Result<Vec<u8>, DhcpError> {
-        let dhcp_msg_buff = self.to_dhcp_pkg()?;
-        gen_eth_pkg(
-            &self.config.iface_mac,
-            if self.srv_mac.is_empty() {
-                BROADCAST_MAC_ADDRESS
-            } else {
-                self.srv_mac.as_str()
-            },
-            &Ipv4Addr::new(0, 0, 0, 0),
-            &Ipv4Addr::new(255, 255, 255, 255),
-            dhcproto::v4::CLIENT_PORT,
-            dhcproto::v4::SERVER_PORT,
-            &dhcp_msg_buff,
-        )
-    }
-}
-
-impl std::convert::TryFrom<&[u8]> for DhcpV4Message {
-    type Error = DhcpError;
-    fn try_from(eth_raw: &[u8]) -> Result<Self, Self::Error> {
-        let pkg = match etherparse::SlicedPacket::from_ethernet(eth_raw) {
-            Err(error) => {
+    pub(crate) fn from_dhcp_pkg(payload: &[u8]) -> Result<Self, DhcpError> {
+        let v4_dhcp_msg = v4::Message::decode(&mut Decoder::new(payload))
+            .map_err(|decode_error| {
                 let e = DhcpError::new(
                     ErrorKind::InvalidDhcpServerReply,
                     format!(
-                        "Failed to parse ethernet package to Dhcpv4Offer: {}",
-                        error
+                        "Failed to parse DHCP message from payload of pkg \
+                        {:?}: {}",
+                        payload, decode_error
                     ),
                 );
                 log::error!("{}", e);
-                return Err(e);
-            }
-            Ok(v) => v,
-        };
-        let eth_hdr = if let Some(i) = &pkg.link {
-            i.to_header()
-        } else {
-            let e = DhcpError::new(
-                ErrorKind::InvalidDhcpServerReply,
-                format!(
-                    "Got invalid ethernet header from Dhcpv4Offer: {:?}",
-                    pkg
-                ),
-            );
-            log::error!("{}", e);
-            return Err(e);
-        };
-        let v4_dhcp_msg = v4::Message::decode(&mut Decoder::new(pkg.payload))
-            .map_err(|decode_error| {
-            let e = DhcpError::new(
-                ErrorKind::InvalidDhcpServerReply,
-                format!(
-                    "Failed to parse DHCP message from payload of pkg \
-                        {:?}: {}",
-                    pkg, decode_error
-                ),
-            );
-            log::error!("{}", e);
-            e
-        })?;
+                e
+            })?;
 
         let msg_type = match v4_dhcp_msg.opts().get(v4::OptionCode::MessageType)
         {
@@ -234,13 +191,43 @@ impl std::convert::TryFrom<&[u8]> for DhcpV4Message {
             }
         };
         let ret = Self {
-            srv_mac: u8_array_to_mac_string(&eth_hdr.source),
             lease: Some(DhcpV4Lease::try_from(&v4_dhcp_msg)?),
             msg_type,
             ..Default::default()
         };
         log::debug!("Got reply DHCP message {:?}", ret);
         Ok(ret)
+    }
+
+    pub(crate) fn to_eth_pkg(&self) -> Result<Vec<u8>, DhcpError> {
+        let dhcp_msg_buff = self.to_dhcp_pkg()?;
+        gen_eth_pkg(
+            &self.config.iface_mac,
+            BROADCAST_MAC_ADDRESS,
+            &Ipv4Addr::new(0, 0, 0, 0),
+            &Ipv4Addr::new(255, 255, 255, 255),
+            dhcproto::v4::CLIENT_PORT,
+            dhcproto::v4::SERVER_PORT,
+            &dhcp_msg_buff,
+        )
+    }
+
+    pub(crate) fn from_eth_pkg(data: &[u8]) -> Result<Self, DhcpError> {
+        let pkg = match etherparse::SlicedPacket::from_ethernet(data) {
+            Err(error) => {
+                let e = DhcpError::new(
+                    ErrorKind::InvalidDhcpServerReply,
+                    format!(
+                        "Failed to parse ethernet package to Dhcpv4Offer: {}",
+                        error
+                    ),
+                );
+                log::error!("{}", e);
+                return Err(e);
+            }
+            Ok(v) => v,
+        };
+        Self::from_dhcp_pkg(pkg.payload)
     }
 }
 

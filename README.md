@@ -6,10 +6,13 @@ Check again in 2022.
 DONE:
  * raw socket with BPF applied and accepting all mac address.
  * DHCP discovery and request.
+ * Renew, rebind.
+ * DHCP IP apply via cli tool `mzc`.
 
 TODO:
  * Verify XID.
- * Renew, rebind.
+ * Route
+ * Timeout
 
 # Try out
 

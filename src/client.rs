@@ -1,11 +1,11 @@
 use std::time::Duration;
 
 use crate::{
-    socket::DhcpSocket, DhcpError, DhcpV4Config, DhcpV4Lease, DhcpV4Message,
-    DhcpV4MessageType, ErrorKind,
+    socket::{DhcpRawSocket, DhcpUdpSocket},
+    DhcpError, DhcpV4Config, DhcpV4Lease, DhcpV4Message, DhcpV4MessageType,
+    ErrorKind,
 };
 
-const BROADCAST_MAC_ADDRESS: &str = "ff:ff:ff:ff:ff:ff";
 // We cannot depend on `std::thread::sleep` as the host might be put into
 // sleep/hibernate mode.
 const LEASE_CHECK_INTERNAL: u64 = 5;
@@ -44,7 +44,7 @@ impl DhcpV4Client {
         &self,
         lease: Option<DhcpV4Lease>,
     ) -> Result<DhcpV4Lease, DhcpError> {
-        let socket = DhcpSocket::new(&self.config)?;
+        let socket = DhcpRawSocket::new(&self.config)?;
         let ack_dhcp_msg = if let Some(lease) = lease {
             self.dhcp_request(&socket, lease)?
         } else {
@@ -73,13 +73,13 @@ impl DhcpV4Client {
 
     fn dhcp_discovery(
         &self,
-        socket: &DhcpSocket,
+        socket: &DhcpRawSocket,
     ) -> Result<DhcpV4Message, DhcpError> {
         let dhcp_msg =
             DhcpV4Message::new(&self.config, DhcpV4MessageType::Discovery);
 
-        socket.send_raw(BROADCAST_MAC_ADDRESS, &dhcp_msg.to_eth_pkg()?)?;
-        let reply_dhcp_msg = socket.recv_dhcpv4_reply()?;
+        let buffer = socket.send_recv(&dhcp_msg.to_eth_pkg()?)?;
+        let reply_dhcp_msg = DhcpV4Message::from_eth_pkg(&buffer)?;
         if reply_dhcp_msg.msg_type != DhcpV4MessageType::Offer {
             let e = DhcpError::new(
                 ErrorKind::InvalidDhcpServerReply,
@@ -97,14 +97,14 @@ impl DhcpV4Client {
 
     fn dhcp_request(
         &self,
-        socket: &DhcpSocket,
+        socket: &DhcpRawSocket,
         lease: DhcpV4Lease,
     ) -> Result<DhcpV4Message, DhcpError> {
         let mut dhcp_msg =
             DhcpV4Message::new(&self.config, DhcpV4MessageType::Request);
         dhcp_msg.load_lease(lease);
-        socket.send_raw(BROADCAST_MAC_ADDRESS, &dhcp_msg.to_eth_pkg()?)?;
-        let reply_dhcp_msg = socket.recv_dhcpv4_reply()?;
+        let buffer = socket.send_recv(&dhcp_msg.to_eth_pkg()?)?;
+        let reply_dhcp_msg = DhcpV4Message::from_eth_pkg(&buffer)?;
         if reply_dhcp_msg.msg_type != DhcpV4MessageType::Ack {
             let e = DhcpError::new(
                 ErrorKind::InvalidDhcpServerReply,
@@ -127,13 +127,15 @@ impl DhcpV4Client {
         let mut dhcp_msg =
             DhcpV4Message::new(&self.config, DhcpV4MessageType::Request);
         dhcp_msg.load_lease(lease.clone());
-        let socket = DhcpSocket::new(&self.config)?;
-        socket.send_unicast(
+        dhcp_msg.renew_or_rebind(true);
+        let buffer = DhcpUdpSocket::send_recv(
+            self.config.iface_name.as_str(),
             &lease.yiaddr,
             &lease.siaddr,
             &dhcp_msg.to_dhcp_pkg()?,
         )?;
-        let reply_dhcp_msg = socket.recv_dhcpv4_reply()?;
+        let reply_dhcp_msg = DhcpV4Message::from_dhcp_pkg(buffer.as_slice())?;
+        log::debug!("Got DHCP message reply: {:?}", reply_dhcp_msg);
         if reply_dhcp_msg.msg_type != DhcpV4MessageType::Ack {
             let e = DhcpError::new(
                 ErrorKind::InvalidDhcpServerReply,
@@ -158,7 +160,33 @@ impl DhcpV4Client {
 
     // Broadcast to all DHCP servers requesting lease extension with ciaddr.
     fn rebind(&self, lease: &DhcpV4Lease) -> Result<DhcpV4Lease, DhcpError> {
-        todo!()
+        let mut dhcp_msg =
+            DhcpV4Message::new(&self.config, DhcpV4MessageType::Request);
+        dhcp_msg.load_lease(lease.clone());
+        dhcp_msg.renew_or_rebind(true);
+        let socket = DhcpRawSocket::new(&self.config)?;
+        let buffer = socket.send_recv(&dhcp_msg.to_eth_pkg()?)?;
+        let reply_dhcp_msg = DhcpV4Message::from_eth_pkg(&buffer)?;
+        if reply_dhcp_msg.msg_type != DhcpV4MessageType::Ack {
+            let e = DhcpError::new(
+                ErrorKind::InvalidDhcpServerReply,
+                format!(
+                    "Invalid message type reply from DHCP server, \
+                    expecting DHCP ack, got {}: debug {:?}",
+                    reply_dhcp_msg.msg_type, reply_dhcp_msg
+                ),
+            );
+            log::debug!("{}", e);
+            return Err(e);
+        }
+        reply_dhcp_msg.lease.ok_or_else(|| {
+            let e = DhcpError::new(
+                ErrorKind::NoLease,
+                "DHCP server provide no lease reply".to_string(),
+            );
+            log::debug!("{}", e);
+            e
+        })
     }
 
     // RFC 2131:
@@ -197,7 +225,7 @@ impl DhcpV4Client {
                                 return Ok(l);
                             }
                             Err(e) => {
-                                log::debug!(
+                                log::warn!(
                                     "DHCP renew failed, will retry: {:?}",
                                     e
                                 );
@@ -221,7 +249,7 @@ impl DhcpV4Client {
                                 return Ok(l);
                             }
                             Err(e) => {
-                                log::debug!(
+                                log::warn!(
                                     "DHCP second renew failed, will rebind: \
                                     {:?}",
                                     e
@@ -246,7 +274,7 @@ impl DhcpV4Client {
                                 return Ok(l);
                             }
                             Err(_) => {
-                                log::error!("DHCP rebind failed, will retry");
+                                log::warn!("DHCP rebind failed, will retry");
                                 self.rebind_failed = true;
                             }
                         }
@@ -311,5 +339,6 @@ fn get_cur_phase(lease: &DhcpV4Lease) -> Result<DhcpV4Phase, DhcpError> {
         DhcpV4Phase::Renewing
     } else {
         DhcpV4Phase::PreRenew
+        //        DhcpV4Phase::Renewing
     })
 }

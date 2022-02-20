@@ -19,13 +19,6 @@ pub(crate) fn mac_str_to_u8_array(mac: &str) -> Vec<u8> {
     mac_bytes
 }
 
-pub(crate) fn u8_array_to_mac_string(raw: &[u8]) -> String {
-    raw.iter()
-        .map(|byte| format!("{:02X}", byte))
-        .collect::<Vec<_>>()
-        .join(":")
-}
-
 pub(crate) fn mac_address_to_eth_mac_bytes(
     mac_address: &str,
 ) -> Result<[u8; libc::ETH_ALEN as usize], DhcpError> {

@@ -11,6 +11,7 @@ pub struct DhcpV4Config {
     pub(crate) client_id: Vec<u8>,
     pub(crate) host_name: String,
     // TODO: Support allow list and deny list for DHCP servers.
+    pub(crate) use_host_name_as_client_id: bool,
 }
 
 impl DhcpV4Config {
@@ -31,6 +32,7 @@ impl DhcpV4Config {
 
     pub fn use_mac_as_client_id(&mut self) -> &mut Self {
         self.client_id = vec![ARP_HW_TYPE_ETHERNET];
+        self.use_host_name_as_client_id = false;
         self.client_id
             .append(&mut mac_str_to_u8_array(&self.iface_mac));
         self
@@ -43,6 +45,7 @@ impl DhcpV4Config {
         // The RFC never mentioned the NULL terminator for string.
         // TODO: Need to check with dnsmasq implementation
         self.client_id.extend_from_slice(self.host_name.as_bytes());
+        self.use_host_name_as_client_id = true;
         self
     }
 }

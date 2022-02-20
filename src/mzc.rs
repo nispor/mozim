@@ -1,5 +1,5 @@
 use mozim::{DhcpV4Client, DhcpV4Config, DhcpV4Lease};
-use nispor::{IfaceConf, IfaceState, IpAddrConf, IpConf, NetConf};
+use nispor::{IfaceConf, IfaceState, IpAddrConf, IpConf, NetConf, NetState};
 
 fn main() {
     let mut log_builder = env_logger::Builder::new();
@@ -25,10 +25,21 @@ fn main() {
             }
             Err(e) => {
                 println!("error {:?}", e);
+                purge_dhcp_ip("eth1");
                 break;
             }
         }
     }
+}
+
+fn new_net_conf_with_ip_conf(iface_name: &str, ip_conf: IpConf) -> NetConf {
+    let mut iface_conf = IfaceConf::default();
+    iface_conf.name = iface_name.to_string();
+    iface_conf.state = IfaceState::Up;
+    iface_conf.ipv4 = Some(ip_conf);
+    let mut net_conf = NetConf::default();
+    net_conf.ifaces = Some(vec![iface_conf]);
+    net_conf
 }
 
 fn apply_dhcp_ip(iface_name: &str, lease: &DhcpV4Lease) {
@@ -39,15 +50,40 @@ fn apply_dhcp_ip(iface_name: &str, lease: &DhcpV4Lease) {
     ip_addr_conf.preferred_lft = format!("{}sec", lease.lease_time);
     let mut ip_conf = IpConf::default();
     ip_conf.addresses = vec![ip_addr_conf];
-    let mut iface_conf = IfaceConf::default();
-    iface_conf.name = iface_name.to_string();
-    iface_conf.state = IfaceState::Up;
-    iface_conf.ipv4 = Some(ip_conf);
-    let mut net_conf = NetConf::default();
-    net_conf.ifaces = Some(vec![iface_conf]);
-    net_conf.apply().unwrap();
+    new_net_conf_with_ip_conf(iface_name, ip_conf)
+        .apply()
+        .unwrap();
 }
 
 fn get_prefix_len(ip: &std::net::Ipv4Addr) -> u8 {
     u32::from_be_bytes(ip.octets()).count_ones() as u8
+}
+
+// Remove all dynamic IP
+fn purge_dhcp_ip(iface_name: &str) {
+    let state = NetState::retrieve().unwrap();
+    if let Some(ip_info) =
+        state.ifaces.get(iface_name).and_then(|i| i.ipv4.as_ref())
+    {
+        let mut addrs_to_remove = Vec::new();
+        for addr in ip_info
+            .addresses
+            .as_slice()
+            .iter()
+            .filter(|a| a.valid_lft != "forever")
+        {
+            let mut addr_conf = IpAddrConf::default();
+            addr_conf.remove = true;
+            addr_conf.address = addr.address.clone();
+            addr_conf.prefix_len = addr.prefix_len;
+            addrs_to_remove.push(addr_conf);
+        }
+        if !addrs_to_remove.is_empty() {
+            let mut ip_conf = IpConf::default();
+            ip_conf.addresses = addrs_to_remove;
+            new_net_conf_with_ip_conf(iface_name, ip_conf)
+                .apply()
+                .unwrap();
+        }
+    }
 }

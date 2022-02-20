@@ -30,7 +30,6 @@ pub(crate) fn apply_dhcp_bpf(fd: libc::c_int) -> Result<(), DhcpError> {
         raw_filters[i].jf = *jf;
         raw_filters[i].k = *k;
     }
-    println!("{:?}", raw_filters);
     let bpf_filter = libc::sock_fprog {
         len: DHCP_BPF_LEN,
         filter: (&raw_filters).as_ptr() as *mut _,
