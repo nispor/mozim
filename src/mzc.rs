@@ -1,22 +1,38 @@
 use clap::Parser;
 use mozim::{DhcpV4Client, DhcpV4Config, DhcpV4Lease};
-use nispor::{IfaceConf, IfaceState, IpAddrConf, IpConf, NetConf, NetState};
+use nispor::{
+    AddressFamily, IfaceConf, IfaceState, IpAddrConf, IpConf, NetConf,
+    NetState, RouteConf, RouteProtocol,
+};
+
+const DEFAULT_METRIC: u32 = 500;
 
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = "DHCPv4 Client")]
 struct Args {
     iface: String,
+    #[clap(long = "clean")]
+    clean_up: bool,
 }
 
 fn main() {
+    env_logger::Builder::new()
+        .filter(Some("nispor"), log::LevelFilter::Debug)
+        .filter(Some("mozim"), log::LevelFilter::Debug)
+        .init();
+
     let args = Args::parse();
 
-    let iface_name = args.iface.as_str();
+    if args.clean_up {
+        purge_dhcp_ip_route(args.iface.as_str());
+    } else {
+        run(args.iface.as_str());
+    }
+}
 
-    let mut log_builder = env_logger::Builder::new();
-    log_builder.filter(Some("mozim"), log::LevelFilter::Debug);
-    log_builder.init();
+fn run(iface_name: &str) {
+    purge_dhcp_ip_route(iface_name);
 
     let mut config = DhcpV4Config::new(iface_name).unwrap();
     config.set_host_name("Gris-Laptop");
@@ -25,18 +41,18 @@ fn main() {
 
     let mut lease = cli.request(None).unwrap();
 
-    println!("Got lease {:?}", lease);
+    log::info!("Got lease {:?}", lease);
     apply_dhcp_ip_route(iface_name, &lease);
 
     loop {
         match cli.run(&lease) {
             Ok(l) => {
-                println!("new lease {:?}", l);
+                log::info!("new lease {:?}", l);
                 apply_dhcp_ip_route(iface_name, &l);
                 lease = l;
             }
             Err(e) => {
-                println!("error {:?}", e);
+                log::info!("error {:?}", e);
                 purge_dhcp_ip_route(iface_name);
                 break;
             }
@@ -62,9 +78,25 @@ fn apply_dhcp_ip_route(iface_name: &str, lease: &DhcpV4Lease) {
     ip_addr_conf.preferred_lft = format!("{}sec", lease.lease_time);
     let mut ip_conf = IpConf::default();
     ip_conf.addresses = vec![ip_addr_conf];
-    new_net_conf_with_ip_conf(iface_name, ip_conf)
-        .apply()
-        .unwrap();
+    let mut net_conf = new_net_conf_with_ip_conf(iface_name, ip_conf);
+    if let Some(gws) = lease.gateways.as_ref() {
+        let mut routes = Vec::new();
+        for (i, gw) in gws.as_slice().iter().enumerate() {
+            routes.push(gen_rt_conf(
+                false,
+                "0.0.0.0/0",
+                iface_name,
+                &gw.to_string(),
+                Some(DEFAULT_METRIC + i as u32),
+            ));
+        }
+        if !routes.is_empty() {
+            net_conf.routes = Some(routes);
+        }
+    }
+
+    log::info!("{:?}", net_conf);
+    net_conf.apply().unwrap();
 }
 
 fn get_prefix_len(ip: &std::net::Ipv4Addr) -> u8 {
@@ -98,4 +130,41 @@ fn purge_dhcp_ip_route(iface_name: &str) {
                 .unwrap();
         }
     }
+    let mut routes_to_remove = Vec::new();
+    for rt in state.routes.as_slice().iter().filter(|rt| {
+        rt.oif.as_deref() == Some(iface_name)
+            && rt.protocol == RouteProtocol::Dhcp
+            && rt.address_family == AddressFamily::IPv4
+    }) {
+        routes_to_remove.push(gen_rt_conf(
+            true,
+            rt.dst.as_deref().unwrap_or("0.0.0.0/0"),
+            iface_name,
+            rt.via
+                .as_deref()
+                .unwrap_or(rt.gateway.as_deref().unwrap_or("0.0.0.0")),
+            None,
+        ));
+    }
+    let mut net_conf = NetConf::default();
+    net_conf.routes = Some(routes_to_remove);
+    net_conf.apply().unwrap();
+}
+
+fn gen_rt_conf(
+    remove: bool,
+    dst: &str,
+    oif: &str,
+    via: &str,
+    metric: Option<u32>,
+) -> RouteConf {
+    let mut rt = RouteConf::default();
+    rt.remove = remove;
+    rt.dst = dst.to_string();
+    rt.oif = Some(oif.to_string());
+    rt.via = Some(via.to_string());
+    rt.table = Some(254);
+    rt.metric = metric;
+    rt.protocol = Some(RouteProtocol::Dhcp);
+    rt
 }
