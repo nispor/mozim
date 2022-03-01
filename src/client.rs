@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use crate::{
     socket::{DhcpRawSocket, DhcpUdpSocket},
+    time::gen_dhcp_request_delay,
     DhcpError, DhcpV4Config, DhcpV4Lease, DhcpV4Message, DhcpV4MessageType,
     ErrorKind,
 };
@@ -40,7 +41,38 @@ impl DhcpV4Client {
         }
     }
 
+    // RFC 2131, section 4.1 "Constructing and sending DHCP messages" has
+    // retransmission guideline.
     pub fn request(
+        &self,
+        lease: Option<&DhcpV4Lease>,
+        max_retry: u32,
+    ) -> Result<DhcpV4Lease, DhcpError> {
+        let mut retry_count: u32 = 0;
+        loop {
+            match self._request(lease.cloned()) {
+                Ok(l) => {
+                    return Ok(l);
+                }
+                Err(e) => {
+                    if retry_count >= max_retry {
+                        return Err(e);
+                    } else {
+                        let delay = gen_dhcp_request_delay(retry_count);
+                        log::warn!(
+                            "DHCP request failed will retry in {}.{} seconds",
+                            delay.as_secs(),
+                            delay.as_millis() / 1000,
+                        );
+                        std::thread::sleep(delay);
+                        retry_count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    fn _request(
         &self,
         lease: Option<DhcpV4Lease>,
     ) -> Result<DhcpV4Lease, DhcpError> {
@@ -133,6 +165,7 @@ impl DhcpV4Client {
             &lease.yiaddr,
             &lease.siaddr,
             &dhcp_msg.to_dhcp_pkg()?,
+            self.config.socket_timeout,
         )?;
         let reply_dhcp_msg = DhcpV4Message::from_dhcp_pkg(buffer.as_slice())?;
         log::debug!("Got DHCP message reply: {:?}", reply_dhcp_msg);

@@ -3,6 +3,8 @@ use crate::{mac::mac_str_to_u8_array, DhcpError, ErrorKind};
 // https://www.iana.org/assignments/arp-parameters/arp-parameters.xhtml#arp-parameters-2
 const ARP_HW_TYPE_ETHERNET: u8 = 1;
 
+const DEFAULT_TIMEOUT: u32 = 5;
+
 #[derive(Debug, PartialEq, Clone, Default)]
 pub struct DhcpV4Config {
     pub(crate) iface_name: String,
@@ -12,6 +14,7 @@ pub struct DhcpV4Config {
     pub(crate) host_name: String,
     // TODO: Support allow list and deny list for DHCP servers.
     pub(crate) use_host_name_as_client_id: bool,
+    pub(crate) socket_timeout: u32,
 }
 
 impl DhcpV4Config {
@@ -21,8 +24,15 @@ impl DhcpV4Config {
             iface_name: np_iface.name.to_string(),
             iface_index: np_iface.index,
             iface_mac: np_iface.mac_address,
+            socket_timeout: DEFAULT_TIMEOUT,
             ..Default::default()
         })
+    }
+
+    // Set socket_timeout in seconds
+    pub fn set_socket_timeout(&mut self, socket_timeout: u32) -> &mut Self {
+        self.socket_timeout = socket_timeout;
+        self
     }
 
     pub fn set_host_name(&mut self, host_name: &str) -> &mut Self {

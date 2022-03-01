@@ -2,6 +2,8 @@ use std::ffi::CString;
 use std::net::{Ipv4Addr, UdpSocket};
 use std::os::unix::io::AsRawFd;
 
+use nix::errno::Errno;
+
 use crate::{
     bpf::apply_dhcp_bpf, mac::mac_address_to_eth_mac_bytes, DhcpError,
     DhcpV4Config, ErrorKind,
@@ -79,7 +81,17 @@ impl DhcpRawSocket {
             );
             log::debug!("Raw socket sent: {} bytes", sent_bytes);
             if sent_bytes <= 0 {
-                log::debug!("Raw socket sent errno: {}", nix::errno::errno());
+                let e = DhcpError::new(
+                    ErrorKind::Bug,
+                    format!(
+                        "Failed to send data to socket {}: {}, data: {:?}",
+                        self.raw_fd,
+                        Errno::last(),
+                        eth_pkg,
+                    ),
+                );
+                log::error!("{}", e);
+                return Err(e);
             }
         }
         Ok(())
@@ -99,19 +111,35 @@ impl DhcpRawSocket {
 
         unsafe {
             log::debug!("Raw socket receiving");
-            log::debug!(
-                "Raw socket recv: {} bytes",
-                libc::recvfrom(
-                    self.raw_fd,
-                    buffer.as_mut_ptr() as *mut libc::c_void,
-                    buffer.len(),
-                    0, // flags
-                    addr_ptr as *mut libc::sockaddr,
-                    &mut addr_buffer_size
-                )
+            let rc = libc::recvfrom(
+                self.raw_fd,
+                buffer.as_mut_ptr() as *mut libc::c_void,
+                buffer.len(),
+                0, // flags
+                addr_ptr as *mut libc::sockaddr,
+                &mut addr_buffer_size,
             );
+            if rc <= 0 {
+                let errno = Errno::last();
+                let e = if errno == Errno::EAGAIN {
+                    DhcpError::new(
+                        ErrorKind::Timeout,
+                        "Timeout on receiving data from socket".to_string(),
+                    )
+                } else {
+                    DhcpError::new(
+                        ErrorKind::Bug,
+                        format!(
+                            "Failed to recv from socket {}: {}",
+                            self.raw_fd, errno
+                        ),
+                    )
+                };
+                log::error!("{}", e);
+                return Err(e);
+            }
+            log::debug!("Raw socket received {:?}", &buffer[..rc as usize]);
         }
-        log::debug!("Raw socket received {:?}", buffer);
         Ok(buffer.to_vec())
     }
 
@@ -120,6 +148,7 @@ impl DhcpRawSocket {
         let eth_protocol = libc::ETH_P_ALL;
         let raw_fd = create_raw_socket(eth_protocol)?;
         bind_raw_socket(raw_fd, eth_protocol, iface_index, &config.iface_mac)?;
+        set_socket_timeout(raw_fd, config.socket_timeout)?;
 
         accept_all_mac_address(raw_fd, iface_index)?;
 
@@ -233,8 +262,8 @@ impl DhcpUdpSocket {
         src_ip: &Ipv4Addr,
         dst_ip: &Ipv4Addr,
         pkg: &[u8],
+        timeout: u32,
     ) -> Result<Vec<u8>, DhcpError> {
-        println!("src ip {:?}", src_ip);
         let udp_socket = UdpSocket::bind(&format!(
             "{}:{}",
             src_ip,
@@ -256,13 +285,20 @@ impl DhcpUdpSocket {
                     ErrorKind::Bug,
                     format!(
                         "Failed to bind socket to interface {} with error: {}",
-                        iface_name, rc
+                        iface_name,
+                        Errno::last(),
                     ),
                 );
                 log::error!("{}", e);
                 return Err(e);
             }
         }
+        udp_socket.set_read_timeout(Some(std::time::Duration::from_secs(
+            timeout.into(),
+        )))?;
+        udp_socket.set_write_timeout(Some(std::time::Duration::from_secs(
+            timeout.into(),
+        )))?;
         udp_socket.connect(&format!(
             "{}:{}",
             dst_ip,
@@ -274,4 +310,50 @@ impl DhcpUdpSocket {
         udp_socket.recv(&mut buffer)?;
         Ok(buffer.to_vec())
     }
+}
+
+fn set_socket_timeout(fd: libc::c_int, timeout: u32) -> Result<(), DhcpError> {
+    let tmo = libc::timeval {
+        tv_sec: timeout.into(),
+        tv_usec: 0,
+    };
+    unsafe {
+        let rc = libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_SNDTIMEO,
+            (&tmo as *const libc::timeval) as *const libc::c_void,
+            std::mem::size_of::<libc::timeval>() as libc::socklen_t,
+        );
+        if rc < 0 {
+            return Err(DhcpError::new(
+                ErrorKind::Bug,
+                format!(
+                    "Failed to set the send timeout SO_SNDTIMEO to \
+                    socket {}: {}",
+                    fd, rc
+                ),
+            ));
+        }
+        let rc = libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_RCVTIMEO,
+            (&tmo as *const libc::timeval) as *const libc::c_void,
+            std::mem::size_of::<libc::timeval>() as libc::socklen_t,
+        );
+        if rc < 0 {
+            let e = DhcpError::new(
+                ErrorKind::Bug,
+                format!(
+                    "Failed to set the recv timeout SO_RCVTIMEO to \
+                    socket {}: {}",
+                    fd, rc
+                ),
+            );
+            log::error!("{}", e);
+            return Err(e);
+        }
+    }
+    Ok(())
 }

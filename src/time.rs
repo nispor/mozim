@@ -1,3 +1,7 @@
+use std::time::Duration;
+
+use rand::Rng;
+
 use crate::{DhcpError, ErrorKind};
 
 // The boot time is holding CLOCK_BOOTTIME which also includes any time that the
@@ -96,4 +100,17 @@ impl std::ops::Div<u32> for BootTime {
                 / (other as i64),
         }
     }
+}
+
+// RFC 2131, section 4.1 "Constructing and sending DHCP messages" has
+// retransmission guideline.
+// It should be starting with 4 seconds and double of previous delay, up to 64
+// seconds. Delay should be randomized from range -1 to 1;
+pub(crate) fn gen_dhcp_request_delay(retry_count: u32) -> Duration {
+    let mut base = 2u64.pow(retry_count + 2) - 1;
+    if base > 62 {
+        base = 62;
+    }
+    let ms: u64 = rand::thread_rng().gen_range(0..2000);
+    Duration::from_secs(base) + Duration::from_millis(ms)
 }

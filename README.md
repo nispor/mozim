@@ -8,11 +8,11 @@ DONE:
  * DHCP discovery and request.
  * Renew, rebind.
  * DHCP IP apply via cli tool `mzc`.
+ * Route
+ * Timeout and retry
 
 TODO:
  * Verify XID.
- * Route
- * Timeout
 
 # Try out
 

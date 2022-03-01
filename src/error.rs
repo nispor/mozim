@@ -1,5 +1,6 @@
 #[derive(Debug, PartialEq, Clone)]
 pub enum ErrorKind {
+    Timeout,
     InvalidArgument,
     InvalidDhcpServerReply,
     NoLease,

@@ -14,6 +14,8 @@ struct Args {
     iface: String,
     #[clap(long = "clean")]
     clean_up: bool,
+    #[clap(long = "max_retry", default_value = "4")]
+    max_retry: u32,
 }
 
 fn main() {
@@ -27,11 +29,11 @@ fn main() {
     if args.clean_up {
         purge_dhcp_ip_route(args.iface.as_str());
     } else {
-        run(args.iface.as_str());
+        run(args.iface.as_str(), args.max_retry);
     }
 }
 
-fn run(iface_name: &str) {
+fn run(iface_name: &str, max_retry: u32) {
     purge_dhcp_ip_route(iface_name);
 
     let mut config = DhcpV4Config::new(iface_name).unwrap();
@@ -39,7 +41,7 @@ fn run(iface_name: &str) {
     config.use_host_name_as_client_id();
     let mut cli = DhcpV4Client::new(config);
 
-    let mut lease = cli.request(None).unwrap();
+    let mut lease = cli.request(None, max_retry).unwrap();
 
     log::info!("Got lease {:?}", lease);
     apply_dhcp_ip_route(iface_name, &lease);
@@ -142,7 +144,7 @@ fn purge_dhcp_ip_route(iface_name: &str) {
             iface_name,
             rt.via
                 .as_deref()
-                .unwrap_or(rt.gateway.as_deref().unwrap_or("0.0.0.0")),
+                .unwrap_or_else(|| rt.gateway.as_deref().unwrap_or("0.0.0.0")),
             None,
         ));
     }
