@@ -13,6 +13,7 @@ DONE:
 
 TODO:
  * Verify XID.
+ * Handle vendor difference: https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/issues/848
 
 # Try out
 

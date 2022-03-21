@@ -16,7 +16,6 @@ const BPF_FILTER_RAW: [(u16, u8, u8, u32); DHCP_BPF_LEN as usize] = [
     (0x6, 0, 0, 0x00040000),
     (0x6, 0, 0, 0x00000000),
 ];
-
 pub(crate) fn apply_dhcp_bpf(fd: libc::c_int) -> Result<(), DhcpError> {
     let mut raw_filters = [libc::sock_filter {
         code: 0,
@@ -35,20 +34,26 @@ pub(crate) fn apply_dhcp_bpf(fd: libc::c_int) -> Result<(), DhcpError> {
         filter: (&raw_filters).as_ptr() as *mut _,
     };
 
-    unsafe {
-        let rc = libc::setsockopt(
+    let rc = unsafe {
+        libc::setsockopt(
             fd,
             libc::SOL_SOCKET,
             libc::SO_ATTACH_FILTER,
             (&bpf_filter as *const _) as *const libc::c_void,
             std::mem::size_of::<libc::sock_fprog>() as libc::socklen_t,
+        )
+    };
+    if rc != 0 {
+        let e = DhcpError::new(
+            ErrorKind::Bug,
+            format!(
+                "Failed to apply socket BPF filter, error: {:?}",
+                nix::errno::Errno::last()
+            ),
         );
-        if rc != 0 {
-            return Err(DhcpError::new(
-                ErrorKind::Bug,
-                format!("Failed to apply socket BPF filter, error: {}", rc),
-            ));
-        }
+        log::error!("{}", e);
+        Err(e)
+    } else {
+        Ok(())
     }
-    Ok(())
 }

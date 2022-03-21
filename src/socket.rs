@@ -150,8 +150,6 @@ impl DhcpRawSocket {
         bind_raw_socket(raw_fd, eth_protocol, iface_index, &config.iface_mac)?;
         set_socket_timeout(raw_fd, config.socket_timeout)?;
 
-        accept_all_mac_address(raw_fd, iface_index)?;
-
         apply_dhcp_bpf(raw_fd)?;
         log::debug!("Raw socket created {}", raw_fd);
         Ok(DhcpRawSocket {
@@ -159,38 +157,6 @@ impl DhcpRawSocket {
             config: config.clone(),
         })
     }
-}
-
-fn accept_all_mac_address(
-    fd: libc::c_int,
-    iface_index: libc::c_int,
-) -> Result<(), DhcpError> {
-    let mreq = libc::packet_mreq {
-        mr_ifindex: iface_index,
-        mr_type: libc::PACKET_MR_PROMISC as libc::c_ushort,
-        mr_alen: 0,
-        mr_address: [0; 8],
-    };
-
-    unsafe {
-        let rc = libc::setsockopt(
-            fd,
-            libc::SOL_PACKET,
-            libc::PACKET_ADD_MEMBERSHIP,
-            (&mreq as *const libc::packet_mreq) as *const libc::c_void,
-            std::mem::size_of::<libc::packet_mreq>() as libc::socklen_t,
-        );
-        if rc != 0 {
-            return Err(DhcpError::new(
-                ErrorKind::Bug,
-                format!(
-                    "Failed to set socket to promiscuous mode with error: {}",
-                    rc
-                ),
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn create_raw_socket(
