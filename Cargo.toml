@@ -16,8 +16,7 @@ rand = "0.8.5"
 libc = "0.2.119"
 nispor = { git = "https://github.com/nispor/nispor" }
 byteorder = "1.4.3"
-#dhcproto = "0.6.0"
-dhcproto = {git = "https://github.com/cathay4t/dhcproto", branch="fix_chaddr"}
+dhcproto = "0.7.0"
 log = "0.4.14"
 etherparse = "0.10.1"
 nix = "0.23.1"

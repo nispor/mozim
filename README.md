@@ -14,6 +14,8 @@ DONE:
 TODO:
  * Verify XID.
  * Handle vendor difference: https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/issues/848
+ * Support multiple DHCP servers with `DHCPNAK` reply.
+ * Support DHCPNAK
 
 # Try out
 

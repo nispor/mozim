@@ -1,4 +1,5 @@
 mod bpf;
+mod event;
 mod client;
 mod config;
 mod error;

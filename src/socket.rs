@@ -35,6 +35,18 @@ impl Drop for DhcpRawSocket {
 }
 
 impl DhcpRawSocket {
+    pub(crate) fn send(&self, eth_pkg: &[u8]) -> Result<(), DhcpError> {
+        if self.raw_fd < 0 {
+            let e = DhcpError::new(
+                ErrorKind::Bug,
+                "Please run DhcpSocket::open_raw() first".to_string(),
+            );
+            log::error!("{}", e);
+            return Err(e);
+        }
+        self.send_raw(BROADCAST_MAC_ADDRESS, eth_pkg)
+    }
+
     pub(crate) fn send_recv(
         &self,
         eth_pkg: &[u8],
@@ -48,7 +60,7 @@ impl DhcpRawSocket {
             return Err(e);
         }
         self.send_raw(BROADCAST_MAC_ADDRESS, eth_pkg)?;
-        self.recv_raw()
+        self.recv()
     }
 
     fn send_raw(
@@ -97,7 +109,7 @@ impl DhcpRawSocket {
         Ok(())
     }
 
-    fn recv_raw(&self) -> Result<Vec<u8>, DhcpError> {
+    pub(crate) fn recv(&self) -> Result<Vec<u8>, DhcpError> {
         let mut src_addr: libc::sockaddr_ll = unsafe { std::mem::zeroed() };
         // TODO: Add support of `Maximum DHCP Message Size` option
         let mut buffer = [0u8; 1500];

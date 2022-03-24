@@ -1,8 +1,94 @@
+use std::collections::HashMap;
+use std::os::unix::io::AsRawFd;
 use std::time::Duration;
 
+use nix::sys::time::{TimeSpec, TimeValLike};
+use nix::sys::timerfd::{
+    ClockId::CLOCK_BOOTTIME, Expiration, TimerFd, TimerFlags, TimerSetTimeFlags,
+};
 use rand::Rng;
 
-use crate::{DhcpError, ErrorKind};
+use crate::{
+    event::{DhcpEpoll, DhcpV4Event},
+    DhcpError, ErrorKind,
+};
+
+#[derive(Debug)]
+pub(crate) struct DhcpTimerFds {
+    timer_fds: HashMap<DhcpV4Event, DhcpTimerFd>,
+}
+
+impl Default for DhcpTimerFds {
+    fn default() -> Self {
+        Self {
+            timer_fds: HashMap::new(),
+        }
+    }
+}
+
+impl DhcpTimerFds {
+    pub(crate) fn add_event(
+        &mut self,
+        epoll: &DhcpEpoll,
+        event: DhcpV4Event,
+        timeout: u32,
+    ) -> Result<(), DhcpError> {
+        let timer_fd = DhcpTimerFd::new(timeout)?;
+        epoll.add_fd(timer_fd.as_raw_fd(), event)?;
+        self.timer_fds.insert(event, timer_fd);
+        Ok(())
+    }
+
+    pub(crate) fn del_event(
+        &mut self,
+        epoll: &DhcpEpoll,
+        event: DhcpV4Event,
+    ) -> Result<(), DhcpError> {
+        if let Some(timer_fd) = self.timer_fds.remove(&event) {
+            epoll.del_fd(timer_fd.as_raw_fd(), event)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct DhcpTimerFd {
+    pub(crate) fd: TimerFd,
+}
+
+impl std::os::unix::io::AsRawFd for DhcpTimerFd {
+    fn as_raw_fd(&self) -> std::os::unix::io::RawFd {
+        self.fd.as_raw_fd()
+    }
+}
+
+impl DhcpTimerFd {
+    pub(crate) fn new(time: u32) -> Result<Self, DhcpError> {
+        let fd =
+            TimerFd::new(CLOCK_BOOTTIME, TimerFlags::empty()).map_err(|e| {
+                let e = DhcpError::new(
+                    ErrorKind::Bug,
+                    format!("Failed to create timerfd {}", e),
+                );
+                log::error!("{}", e);
+                e
+            })?;
+        fd.set(
+            Expiration::OneShot(TimeSpec::seconds(time.into())),
+            TimerSetTimeFlags::empty(),
+        )
+        .map_err(|e| {
+            let e = DhcpError::new(
+                ErrorKind::Bug,
+                format!("Failed to set timerfd {}", e),
+            );
+            log::error!("{}", e);
+            e
+        })?;
+        log::debug!("TimerFd created {:?} with {} seconds", fd, time);
+        Ok(Self { fd })
+    }
+}
 
 // The boot time is holding CLOCK_BOOTTIME which also includes any time that the
 // system is suspended.
@@ -106,11 +192,14 @@ impl std::ops::Div<u32> for BootTime {
 // retransmission guideline.
 // It should be starting with 4 seconds and double of previous delay, up to 64
 // seconds. Delay should be randomized from range -1 to 1;
-pub(crate) fn gen_dhcp_request_delay(retry_count: u32) -> Duration {
+pub(crate) fn gen_dhcp_request_delay(retry_count: u32) -> u32 {
     let mut base = 2u64.pow(retry_count + 2) - 1;
     if base > 62 {
         base = 62;
     }
     let ms: u64 = rand::thread_rng().gen_range(0..2000);
-    Duration::from_secs(base) + Duration::from_millis(ms)
+    (Duration::from_secs(base) + Duration::from_millis(ms))
+        .as_secs()
+        .try_into()
+        .unwrap_or(u32::MAX)
 }

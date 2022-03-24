@@ -6,6 +6,7 @@ use nispor::{
 };
 
 const DEFAULT_METRIC: u32 = 500;
+const POLL_WAIT_TIME: isize = 5;
 
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
@@ -22,6 +23,7 @@ fn main() {
     env_logger::Builder::new()
         .filter(Some("nispor"), log::LevelFilter::Debug)
         .filter(Some("mozim"), log::LevelFilter::Debug)
+        .filter(Some("mzc"), log::LevelFilter::Debug)
         .init();
 
     let args = Args::parse();
@@ -39,22 +41,25 @@ fn run(iface_name: &str, max_retry: u32) {
     let mut config = DhcpV4Config::new(iface_name).unwrap();
     config.set_host_name("Gris-Laptop");
     config.use_host_name_as_client_id();
-    let mut cli = DhcpV4Client::new(config);
-
-    let mut lease = cli.request(None, max_retry).unwrap();
-
-    log::info!("Got lease {:?}", lease);
-    apply_dhcp_ip_route(iface_name, &lease);
+    let mut cli = DhcpV4Client::init(config, None).unwrap();
 
     loop {
-        match cli.run(&lease) {
-            Ok(l) => {
-                log::info!("new lease {:?}", l);
-                apply_dhcp_ip_route(iface_name, &l);
-                lease = l;
+        match cli.poll(POLL_WAIT_TIME) {
+            Ok(events) => {
+                for event in events {
+                    match cli.process(event) {
+                        Ok(Some(lease)) => {
+                            apply_dhcp_ip_route(iface_name, &lease);
+                        }
+                        Ok(None) => (),
+                        Err(e) => {
+                            purge_dhcp_ip_route(iface_name);
+                            return;
+                        }
+                    }
+                }
             }
             Err(e) => {
-                log::info!("error {:?}", e);
                 purge_dhcp_ip_route(iface_name);
                 break;
             }
