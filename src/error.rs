@@ -5,6 +5,7 @@ pub enum ErrorKind {
     InvalidDhcpServerReply,
     NoLease,
     Bug,
+    LeaseExpired,
 }
 
 #[derive(Debug, PartialEq, Clone)]

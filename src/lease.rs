@@ -2,11 +2,10 @@ use std::net::Ipv4Addr;
 
 use dhcproto::{v4, v4::DhcpOption};
 
-use crate::{time::BootTime, DhcpError};
+use crate::DhcpError;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct DhcpV4Lease {
-    pub got_time: BootTime,
     pub siaddr: Ipv4Addr,
     pub yiaddr: Ipv4Addr,
     pub t1: u32,
@@ -28,7 +27,6 @@ pub struct DhcpV4Lease {
 impl Default for DhcpV4Lease {
     fn default() -> Self {
         Self {
-            got_time: BootTime::new(0, 0),
             siaddr: Ipv4Addr::new(0, 0, 0, 0),
             yiaddr: Ipv4Addr::new(0, 0, 0, 0),
             t1: 0,
@@ -47,19 +45,14 @@ impl Default for DhcpV4Lease {
     }
 }
 
-impl DhcpV4Lease {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 impl std::convert::TryFrom<&v4::Message> for DhcpV4Lease {
     type Error = DhcpError;
     fn try_from(v4_dhcp_msg: &v4::Message) -> Result<Self, Self::Error> {
-        let mut ret = Self::new();
-        ret.siaddr = v4_dhcp_msg.siaddr();
-        ret.yiaddr = v4_dhcp_msg.yiaddr();
-        ret.got_time = BootTime::now();
+        let mut ret = Self {
+            siaddr: v4_dhcp_msg.siaddr(),
+            yiaddr: v4_dhcp_msg.yiaddr(),
+            ..Default::default()
+        };
         for (_, dhcp_opt) in v4_dhcp_msg.opts().iter() {
             match dhcp_opt {
                 DhcpOption::MessageType(_) => (),

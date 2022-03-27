@@ -15,8 +15,8 @@ struct Args {
     iface: String,
     #[clap(long = "clean")]
     clean_up: bool,
-    #[clap(long = "max_retry", default_value = "4")]
-    max_retry: u32,
+    #[clap(long = "timeout", default_value = "120")]
+    timeout: u32,
 }
 
 fn main() {
@@ -31,16 +31,17 @@ fn main() {
     if args.clean_up {
         purge_dhcp_ip_route(args.iface.as_str());
     } else {
-        run(args.iface.as_str(), args.max_retry);
+        run(args.iface.as_str(), args.timeout);
     }
 }
 
-fn run(iface_name: &str, max_retry: u32) {
+fn run(iface_name: &str, timeout: u32) {
     purge_dhcp_ip_route(iface_name);
 
     let mut config = DhcpV4Config::new(iface_name).unwrap();
     config.set_host_name("Gris-Laptop");
     config.use_host_name_as_client_id();
+    config.set_timeout(timeout);
     let mut cli = DhcpV4Client::init(config, None).unwrap();
 
     loop {
@@ -52,14 +53,14 @@ fn run(iface_name: &str, max_retry: u32) {
                             apply_dhcp_ip_route(iface_name, &lease);
                         }
                         Ok(None) => (),
-                        Err(e) => {
+                        Err(_) => {
                             purge_dhcp_ip_route(iface_name);
                             return;
                         }
                     }
                 }
             }
-            Err(e) => {
+            Err(_) => {
                 purge_dhcp_ip_route(iface_name);
                 break;
             }
@@ -102,7 +103,7 @@ fn apply_dhcp_ip_route(iface_name: &str, lease: &DhcpV4Lease) {
         }
     }
 
-    log::info!("{:?}", net_conf);
+    log::debug!("Applying {:?}", net_conf);
     net_conf.apply().unwrap();
 }
 
