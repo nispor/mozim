@@ -14,7 +14,6 @@ path = "src/mzc.rs"
 [dependencies]
 rand = "0.8.5"
 libc = "0.2.119"
-nispor = { git = "https://github.com/nispor/nispor" }
 byteorder = "1.4.3"
 dhcproto = "0.7.0"
 log = "0.4.14"
@@ -22,3 +21,4 @@ etherparse = "0.10.1"
 nix = "0.23.1"
 env_logger = "0.9.0"
 clap = { version = "3.1.2", features = ["derive"] }
+nispor = "1.2.7"
