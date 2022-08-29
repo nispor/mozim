@@ -1,4 +1,4 @@
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, RawFd};
 
 use crate::{
     event::{DhcpEventPool, DhcpV4Event},
@@ -39,6 +39,12 @@ pub struct DhcpV4Client {
     raw_socket: Option<DhcpRawSocket>,
     retry_count: u32,
     udp_socket: Option<DhcpUdpSocket>,
+}
+
+impl AsRawFd for DhcpV4Client {
+    fn as_raw_fd(&self) -> RawFd {
+        self.event_pool.epoll.as_raw_fd()
+    }
 }
 
 impl DhcpV4Client {

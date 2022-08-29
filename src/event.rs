@@ -77,7 +77,7 @@ impl std::fmt::Display for DhcpV4Event {
 pub(crate) struct DhcpEventPool {
     timer_fds: HashMap<DhcpV4Event, DhcpTimerFd>,
     socket_fds: HashMap<DhcpV4Event, RawFd>,
-    epoll: DhcpEpoll,
+    pub(crate) epoll: DhcpEpoll,
 }
 
 impl Drop for DhcpEventPool {
@@ -154,8 +154,14 @@ impl DhcpEventPool {
 }
 
 #[derive(Debug)]
-struct DhcpEpoll {
+pub(crate) struct DhcpEpoll {
     fd: RawFd,
+}
+
+impl AsRawFd for DhcpEpoll {
+    fn as_raw_fd(&self) -> RawFd {
+        self.fd
+    }
 }
 
 impl DhcpEpoll {
