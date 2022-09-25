@@ -2,19 +2,64 @@ use crate::{DhcpError, ErrorKind};
 
 const DHCP_BPF_LEN: u16 = 11;
 
-// Using the output of `tcpdump -dd 'ip and udp dst port 68'`
+// libc are setting these constant as u32 which make our life worse
+// as libc::sock_filter code is u16.
+const BPF_B: u16 = 0x10;
+const BPF_H: u16 = 0x08;
+
+const BPF_ABS: u16 = 0x20;
+const BPF_IND: u16 = 0x40;
+const BPF_MSH: u16 = 0xa0;
+
+const BPF_JEQ: u16 = 0x10;
+const BPF_JSET: u16 = 0x40;
+
+const BPF_K: u16 = 0x00;
+
+const BPF_LD: u16 = 0x00;
+const BPF_LDX: u16 = 0x01;
+const BPF_JMP: u16 = 0x05;
+const BPF_RET: u16 = 0x06;
+
+const ETHERTYPE_IP: u32 = 0x0800;
+const IPPROTO_UDP: u32 = 17;
+
+const DHCPV4_DST_PORT: u32 = 68;
+const ETHER_TYPE_POS: u32 = 12;
+const IP_PROTO_POS: u32 = 23;
+const IP_FRAGMENT_POS: u32 = 20;
+const IP_HEADER_LEN_POS: u32 = 14;
+const ETHER_HEADER_LEN: u32 = 14;
+const DST_PORT_IN_IP_POS: u32 = 2;
+
 const BPF_FILTER_RAW: [(u16, u8, u8, u32); DHCP_BPF_LEN as usize] = [
-    (0x28, 0, 0, 0x0000000c),
-    (0x15, 0, 8, 0x00000800),
-    (0x30, 0, 0, 0x00000017),
-    (0x15, 0, 6, 0x00000011),
-    (0x28, 0, 0, 0x00000014),
-    (0x45, 4, 0, 0x00001fff),
-    (0xb1, 0, 0, 0x0000000e),
-    (0x48, 0, 0, 0x00000010),
-    (0x15, 0, 1, 0x00000044),
-    (0x6, 0, 0, 0x00040000),
-    (0x6, 0, 0, 0x00000000),
+    // Load protocol type to A
+    (BPF_LD | BPF_H | BPF_ABS, 0, 0, ETHER_TYPE_POS),
+    // Move on if ETHERTYPE_IP, otherwise drop package
+    (BPF_JMP | BPF_JEQ | BPF_K, 0, 8, ETHERTYPE_IP),
+    // Load IPv4 protocol type to A
+    (BPF_LD | BPF_B | BPF_ABS, 0, 0, IP_PROTO_POS),
+    // Move on if UDP, otherwise drop package
+    (BPF_JMP | BPF_JEQ | BPF_K, 0, 6, IPPROTO_UDP),
+    // Load IPv4 flag and fragment offset
+    (BPF_LD | BPF_H | BPF_ABS, 0, 0, IP_FRAGMENT_POS),
+    // Drop package which has MF(more fragment) set is 1 or is fragment
+    (BPF_JMP | BPF_JSET | BPF_K, 4, 0, 0x1fff),
+    // Store IP header length to X
+    (BPF_LDX | BPF_B | BPF_MSH, 0, 0, IP_HEADER_LEN_POS),
+    // Load UDP destination port number to A
+    (
+        BPF_LD | BPF_H | BPF_IND,
+        0,
+        0,
+        ETHER_HEADER_LEN + DST_PORT_IN_IP_POS,
+    ),
+    // Check whether destination port is DHCPV4_DST_PORT
+    (BPF_JMP | BPF_JEQ | BPF_K, 0, 1, DHCPV4_DST_PORT),
+    // Accept this package
+    (BPF_RET, 0, 0, u32::MAX),
+    // Drop this package
+    (BPF_RET, 0, 0, 0x00000000),
 ];
 pub(crate) fn apply_dhcp_bpf(fd: libc::c_int) -> Result<(), DhcpError> {
     let mut raw_filters = [libc::sock_filter {
@@ -28,6 +73,13 @@ pub(crate) fn apply_dhcp_bpf(fd: libc::c_int) -> Result<(), DhcpError> {
         raw_filters[i].jt = *jt;
         raw_filters[i].jf = *jf;
         raw_filters[i].k = *k;
+        log::debug!(
+            "Registering BPF filter {:#04x}, {}, {}, {:#010x}",
+            code,
+            jt,
+            jf,
+            k
+        );
     }
     let bpf_filter = libc::sock_fprog {
         len: DHCP_BPF_LEN,
