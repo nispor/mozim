@@ -1,4 +1,4 @@
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ErrorKind {
     Timeout,
     InvalidArgument,
@@ -8,7 +8,7 @@ pub enum ErrorKind {
     LeaseExpired,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct DhcpError {
     kind: ErrorKind,
     msg: String,

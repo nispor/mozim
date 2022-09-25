@@ -10,7 +10,7 @@ use crate::{
 const BROADCAST_MAC_ADDRESS: &str = "ff:ff:ff:ff:ff:ff";
 const DEFAULT_TTL: u8 = 128;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum DhcpV4MessageType {
     Discovery,
     Offer,
@@ -49,7 +49,7 @@ impl std::fmt::Display for DhcpV4MessageType {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct DhcpV4Message {
     pub msg_type: DhcpV4MessageType,
     pub lease: Option<DhcpV4Lease>,

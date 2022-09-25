@@ -4,7 +4,7 @@ use dhcproto::{v4, v4::DhcpOption};
 
 use crate::DhcpError;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct DhcpV4Lease {
     pub siaddr: Ipv4Addr,
     pub yiaddr: Ipv4Addr,

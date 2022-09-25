@@ -6,7 +6,7 @@ const ARP_HW_TYPE_ETHERNET: u8 = 1;
 const DEFAULT_TIMEOUT: u32 = 120;
 const DEFAULT_SOCKET_TIMEOUT: u32 = 5;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct DhcpV4Config {
     pub(crate) iface_name: String,
     pub(crate) iface_index: u32,

@@ -285,7 +285,7 @@ impl DhcpV4Client {
             .add_socket(udp_socket.as_raw_fd(), DhcpV4Event::UdpPackageIn)?;
         self.udp_socket = Some(udp_socket);
         self.phase = DhcpV4Phase::Renew;
-        self.retry_count = if is_retry { 1 } else { 0 };
+        self.retry_count = u32::from(is_retry);
         Ok(None)
     }
 
@@ -350,7 +350,7 @@ impl DhcpV4Client {
             .add_socket(raw_socket.as_raw_fd(), DhcpV4Event::RawPackageIn)?;
         self.raw_socket = Some(raw_socket);
         self.phase = DhcpV4Phase::Rebind;
-        self.retry_count = if is_retry { 1 } else { 0 };
+        self.retry_count = u32::from(is_retry);
         Ok(None)
     }
 

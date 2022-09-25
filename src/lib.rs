@@ -1,8 +1,8 @@
 mod bpf;
-mod event;
 mod client;
 mod config;
 mod error;
+mod event;
 mod lease;
 mod mac;
 mod msg;
