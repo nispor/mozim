@@ -128,7 +128,13 @@ impl DhcpV4Client {
             log::error!("{}", e);
             return Err(e);
         };
-        let lease = recv_dhcp_msg(socket, DhcpV4MessageType::Offer)?;
+        let lease = match recv_dhcp_msg(socket, DhcpV4MessageType::Offer) {
+            Ok(l) => l,
+            Err(_) => {
+                // We should not fail the action but let it retry and timeout
+                return Ok(None);
+            }
+        };
         self.phase = DhcpV4Phase::Request;
         socket.send(&self.gen_request_pkg(&lease).to_eth_pkg()?)?;
         // TODO: Handle retry on failure
@@ -161,7 +167,13 @@ impl DhcpV4Client {
             log::error!("{}", e);
             return Err(e);
         };
-        let lease = recv_dhcp_msg(socket, DhcpV4MessageType::Ack)?;
+        let lease = match recv_dhcp_msg(socket, DhcpV4MessageType::Ack) {
+            Ok(l) => l,
+            Err(_) => {
+                // We should not fail the action but let it retry and timeout
+                return Ok(None);
+            }
+        };
         self.clean_up();
         self.lease = Some(lease.clone());
         self.set_renew_rebind_timer(&lease)?;
@@ -455,7 +467,7 @@ fn recv_dhcp_msg(
             ErrorKind::InvalidDhcpServerReply,
             format!(
                 "Invalid message type reply from DHCP server, \
-                    expecting DHCP {}, got {}: debug {:?}",
+                expecting DHCP {}, got {}: debug {:?}",
                 expected, reply_dhcp_msg.msg_type, reply_dhcp_msg
             ),
         );
