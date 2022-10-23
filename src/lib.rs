@@ -9,6 +9,9 @@ mod msg;
 mod socket;
 mod time;
 
+#[cfg(test)]
+mod integ_tests;
+
 pub use crate::client::DhcpV4Client;
 pub use crate::config::DhcpV4Config;
 pub use crate::error::{DhcpError, ErrorKind};

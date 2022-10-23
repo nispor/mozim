@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+   types: [opened, synchronize, reopened]
+
+jobs:
+  rust_lint:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - rust_version: "stable"
+          - rust_version: "nightly"
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Rust ${{ matrix.rust_version }}
+      run: |
+        rustup default ${{ matrix.rust_version }}
+        rustup component add rustfmt clippy
+
+    - name: Check fmt
+      if: matrix.rust_version == 'stable'
+      run: cargo fmt -- --check
+
+    - name: Check clippy
+      if: matrix.rust_version == 'nightly'
+      run: cargo clippy -- -D warnings
+
+  rust_integ:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Install packages
+      run:  sudo apt-get -y install dnsmasq
+
+    - uses: actions/checkout@v3
+
+    - name: Install Rust stable
+      run: rustup default stable
+
+    - name: Run test
+      env:
+        # Needed for the `link::test::create_get_delete_w` test to pass.
+        CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: "sudo -E"
+      run: cargo test -- --test-threads=1 --show-output
