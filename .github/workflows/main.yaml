@@ -20,7 +20,8 @@ jobs:
 
     - name: Install Rust ${{ matrix.rust_version }}
       run: |
-        rustup default ${{ matrix.rust_version }}
+        rustup override set ${{ matrix.rust_version }}
+        rustup update ${{ matrix.rust_version }}
         rustup component add rustfmt clippy
 
     - name: Check fmt
