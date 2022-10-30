@@ -1,4 +1,8 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::{mac::mac_str_to_u8_array, DhcpError, ErrorKind};
+
+use nispor::{NetState, NetStateFilter, NetStateIfaceFilter};
 
 // https://www.iana.org/assignments/arp-parameters/arp-parameters.xhtml#arp-parameters-2
 const ARP_HW_TYPE_ETHERNET: u8 = 1;
@@ -76,8 +80,6 @@ impl DhcpV4Config {
     }
 }
 
-// TODO: Using NetState::retrieve() has performance issue here when there are
-// a lot route entries.
 fn get_nispor_iface(iface_name: &str) -> Result<nispor::Iface, DhcpError> {
     if iface_name.is_empty() {
         let e = DhcpError::new(
@@ -87,7 +89,12 @@ fn get_nispor_iface(iface_name: &str) -> Result<nispor::Iface, DhcpError> {
         log::error!("{}", e);
         return Err(e);
     }
-    let net_state = match nispor::NetState::retrieve() {
+    let mut filter = NetStateFilter::minimum();
+    let mut iface_filter = NetStateIfaceFilter::minimum();
+    iface_filter.iface_name = Some(iface_name.to_string());
+    filter.iface = Some(iface_filter);
+
+    let net_state = match NetState::retrieve_with_filter(&filter) {
         Ok(s) => s,
         Err(e) => {
             return Err(DhcpError::new(
