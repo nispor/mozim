@@ -1,8 +1,11 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use clap::Parser;
 use mozim::{DhcpV4Client, DhcpV4Config, DhcpV4Lease};
 use nispor::{
     AddressFamily, IfaceConf, IfaceState, IpAddrConf, IpConf, NetConf,
-    NetState, RouteConf, RouteProtocol,
+    NetState, NetStateFilter, NetStateIfaceFilter, NetStateRouteFilter,
+    RouteConf, RouteProtocol,
 };
 
 const DEFAULT_METRIC: u32 = 500;
@@ -113,7 +116,17 @@ fn get_prefix_len(ip: &std::net::Ipv4Addr) -> u8 {
 
 // Remove all dynamic IP and dhcp routes of specified interface
 fn purge_dhcp_ip_route(iface_name: &str) {
-    let state = NetState::retrieve().unwrap();
+    let mut iface_filter = NetStateIfaceFilter::minimum();
+    iface_filter.iface_name = Some(iface_name.to_string());
+    iface_filter.include_ip_address = true;
+    let mut route_filter = NetStateRouteFilter::default();
+    route_filter.protocol = Some(RouteProtocol::Dhcp);
+
+    let mut filter = NetStateFilter::minimum();
+    filter.iface = Some(iface_filter);
+    filter.route = Some(route_filter);
+
+    let state = NetState::retrieve_with_filter(&filter).unwrap();
     if let Some(ip_info) =
         state.ifaces.get(iface_name).and_then(|i| i.ipv4.as_ref())
     {
