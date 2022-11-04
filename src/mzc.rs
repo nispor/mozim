@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use clap::Parser;
 use mozim::{DhcpV4Client, DhcpV4Config, DhcpV4Lease};
 use nispor::{
     AddressFamily, IfaceConf, IfaceState, IpAddrConf, IpConf, NetConf,
@@ -10,17 +9,16 @@ use nispor::{
 
 const DEFAULT_METRIC: u32 = 500;
 const POLL_WAIT_TIME: isize = 5;
+const APP_NAME: &str = "mzc";
 
-/// Simple program to greet a person
-#[derive(Parser, Debug)]
-#[clap(author, version, about, long_about = "DHCPv4 Client")]
-struct Args {
-    iface: String,
-    #[clap(long = "clean")]
-    clean_up: bool,
-    #[clap(long = "timeout", default_value = "120")]
-    timeout: u32,
-}
+const SUBCOMMAND_RUN: &str = "run";
+const SUBCOMMAND_PROXY: &str = "proxy";
+const SUBCOMMAND_CLEAN: &str = "clean";
+const SUBCOMMAND_VERSION: &str = "version";
+const ARG_IFNAME: &str = "ifname";
+const ARG_TIMEOUT: &str = "timeout";
+const ARG_MAC: &str = "mac";
+const DEFAULT_TIMEOUT_STR: &str = "480";
 
 fn main() {
     env_logger::Builder::new()
@@ -29,12 +27,97 @@ fn main() {
         .filter(Some("mzc"), log::LevelFilter::Debug)
         .init();
 
-    let args = Args::parse();
+    let matches = clap::Command::new(APP_NAME)
+        .version(clap::crate_version!())
+        .author("Gris Ge <fge@redhat.com>")
+        .about("Command line of mozim")
+        .subcommand_required(true)
+        .subcommand(
+            clap::Command::new(SUBCOMMAND_RUN)
+                .alias("r")
+                .about("Run DHCP Client")
+                .arg(
+                    clap::Arg::new(ARG_IFNAME)
+                        .index(1)
+                        .help("Interface name")
+                        .takes_value(true),
+                )
+                .arg(
+                    clap::Arg::new(ARG_TIMEOUT)
+                        .help("Timeout, default to 480 seconds")
+                        .long(ARG_TIMEOUT)
+                        .short('t')
+                        .takes_value(true)
+                        .default_value(DEFAULT_TIMEOUT_STR),
+                ),
+        )
+        .subcommand(
+            clap::Command::new(SUBCOMMAND_PROXY)
+                .alias("p")
+                .about("Run DHCP Client proxy")
+                .arg(
+                    clap::Arg::new(ARG_IFNAME)
+                        .index(1)
+                        .help("Outgoing interface name")
+                        .takes_value(true),
+                )
+                .arg(
+                    clap::Arg::new(ARG_MAC)
+                        .index(2)
+                        .help("MAC address to proxy")
+                        .takes_value(true),
+                )
+                .arg(
+                    clap::Arg::new(ARG_TIMEOUT)
+                        .help("Timeout, default to 480 seconds")
+                        .long(ARG_TIMEOUT)
+                        .short('t')
+                        .takes_value(true)
+                        .default_value(DEFAULT_TIMEOUT_STR),
+                ),
+        )
+        .subcommand(
+            clap::Command::new(SUBCOMMAND_CLEAN)
+                .alias("c")
+                .about("Clean up DHCP IP and routes on specified interface")
+                .arg(
+                    clap::Arg::new(ARG_IFNAME)
+                        .index(1)
+                        .help("Interface name")
+                        .takes_value(true),
+                ),
+        )
+        .subcommand(
+            clap::Command::new(SUBCOMMAND_VERSION)
+                .alias("v")
+                .about("Show version"),
+        )
+        .get_matches();
 
-    if args.clean_up {
-        purge_dhcp_ip_route(args.iface.as_str());
-    } else {
-        run(args.iface.as_str(), args.timeout);
+    if let Some(matches) = matches.subcommand_matches(SUBCOMMAND_RUN) {
+        let timeout = matches
+            .value_of(ARG_TIMEOUT)
+            .unwrap_or(DEFAULT_TIMEOUT_STR)
+            .parse::<u32>()
+            .unwrap();
+        if let Some(iface_name) = matches.value_of(ARG_IFNAME) {
+            run(iface_name, timeout)
+        }
+    } else if let Some(matches) = matches.subcommand_matches(SUBCOMMAND_PROXY) {
+        let timeout = matches
+            .value_of(ARG_TIMEOUT)
+            .unwrap_or(DEFAULT_TIMEOUT_STR)
+            .parse::<u32>()
+            .unwrap();
+        if let Some(iface_name) = matches.value_of(ARG_IFNAME) {
+            proxy(iface_name, matches.value_of(ARG_MAC).unwrap(), timeout)
+        }
+    } else if let Some(matches) = matches.subcommand_matches(SUBCOMMAND_CLEAN) {
+        if let Some(iface_name) = matches.value_of(ARG_IFNAME) {
+            purge_dhcp_ip_route(iface_name);
+        }
+    } else if matches.subcommand_matches(SUBCOMMAND_VERSION).is_some() {
+        println!("{} {}", APP_NAME, clap::crate_version!());
     }
 }
 
@@ -188,4 +271,33 @@ fn gen_rt_conf(
     rt.metric = metric;
     rt.protocol = Some(RouteProtocol::Dhcp);
     rt
+}
+
+fn proxy(iface_name: &str, mac: &str, timeout: u32) {
+    let mut config = DhcpV4Config::new_proxy(iface_name, mac).unwrap();
+    config.set_timeout(timeout);
+    let mut cli = DhcpV4Client::init(config, None).unwrap();
+
+    loop {
+        match cli.poll(POLL_WAIT_TIME) {
+            Ok(events) => {
+                for event in events {
+                    match cli.process(event) {
+                        Ok(Some(lease)) => {
+                            println!("{:?}", lease);
+                        }
+                        Ok(None) => (),
+                        Err(e) => {
+                            eprintln!("Error {:?}", e);
+                            return;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Error {:?}", e);
+                break;
+            }
+        }
+    }
 }

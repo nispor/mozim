@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use std::ffi::CString;
 use std::net::{Ipv4Addr, UdpSocket};
 use std::os::unix::io::AsRawFd;
@@ -6,8 +8,8 @@ use std::os::unix::io::RawFd;
 use nix::errno::Errno;
 
 use crate::{
-    bpf::apply_dhcp_bpf, mac::mac_address_to_eth_mac_bytes, DhcpError,
-    DhcpV4Config, ErrorKind,
+    bpf::apply_dhcp_bpf, mac::mac_address_to_eth_mac_bytes,
+    proiscuous::enable_promiscuous_mode, DhcpError, DhcpV4Config, ErrorKind,
 };
 
 const BROADCAST_MAC_ADDRESS: &str = "ff:ff:ff:ff:ff:ff";
@@ -46,7 +48,13 @@ impl DhcpRawSocket {
         let iface_index = config.iface_index as libc::c_int;
         let eth_protocol = libc::ETH_P_ALL;
         let raw_fd = create_raw_socket(eth_protocol)?;
-        bind_raw_socket(raw_fd, eth_protocol, iface_index, &config.iface_mac)?;
+
+        bind_raw_socket(raw_fd, eth_protocol, iface_index, &config.src_mac)?;
+
+        if config.is_proxy {
+            enable_promiscuous_mode(raw_fd, iface_index)?;
+        }
+
         set_socket_timeout(raw_fd, config.socket_timeout)?;
 
         apply_dhcp_bpf(raw_fd)?;
