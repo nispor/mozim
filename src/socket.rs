@@ -239,7 +239,7 @@ impl DhcpUdpSocket {
         dst_ip: &Ipv4Addr,
         socket_timeout: u32,
     ) -> Result<Self, DhcpError> {
-        let socket = UdpSocket::bind(&format!(
+        let socket = UdpSocket::bind(format!(
             "{}:{}",
             src_ip,
             0 // Use random source port
@@ -252,7 +252,7 @@ impl DhcpUdpSocket {
         socket.set_write_timeout(Some(std::time::Duration::from_secs(
             socket_timeout.into(),
         )))?;
-        socket.connect(&format!("{}:{}", dst_ip, dhcproto::v4::SERVER_PORT))?;
+        socket.connect(format!("{}:{}", dst_ip, dhcproto::v4::SERVER_PORT))?;
 
         Ok(Self { socket })
     }
