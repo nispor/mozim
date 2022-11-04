@@ -3,4 +3,7 @@
 #[cfg(test)]
 mod dhcpv4;
 
+#[cfg(test)]
+mod dhcpv4_proxy;
+
 mod env;

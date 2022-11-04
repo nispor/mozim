@@ -14,13 +14,14 @@ const DEFAULT_SOCKET_TIMEOUT: u32 = 5;
 pub struct DhcpV4Config {
     pub(crate) iface_name: String,
     pub(crate) iface_index: u32,
-    pub(crate) iface_mac: String,
+    pub(crate) src_mac: String,
     pub(crate) client_id: Vec<u8>,
     pub(crate) host_name: String,
     // TODO: Support allow list and deny list for DHCP servers.
     pub(crate) use_host_name_as_client_id: bool,
     pub(crate) timeout: u32,
     pub(crate) socket_timeout: u32,
+    pub(crate) is_proxy: bool,
 }
 
 impl Default for DhcpV4Config {
@@ -28,12 +29,13 @@ impl Default for DhcpV4Config {
         Self {
             iface_name: String::new(),
             iface_index: 0,
-            iface_mac: String::new(),
+            src_mac: String::new(),
             client_id: Vec::new(),
             host_name: String::new(),
             use_host_name_as_client_id: false,
             timeout: DEFAULT_TIMEOUT,
             socket_timeout: DEFAULT_SOCKET_TIMEOUT,
+            is_proxy: false,
         }
     }
 }
@@ -44,7 +46,20 @@ impl DhcpV4Config {
         Ok(Self {
             iface_name: np_iface.name.to_string(),
             iface_index: np_iface.index,
-            iface_mac: np_iface.mac_address,
+            src_mac: np_iface.mac_address,
+            ..Default::default()
+        })
+    }
+    pub fn new_proxy(
+        out_iface_name: &str,
+        proxy_mac: &str,
+    ) -> Result<Self, DhcpError> {
+        let np_iface = get_nispor_iface(out_iface_name)?;
+        Ok(Self {
+            iface_name: np_iface.name.to_string(),
+            iface_index: np_iface.index,
+            src_mac: proxy_mac.to_string(),
+            is_proxy: true,
             ..Default::default()
         })
     }
@@ -64,7 +79,7 @@ impl DhcpV4Config {
         self.client_id = vec![ARP_HW_TYPE_ETHERNET];
         self.use_host_name_as_client_id = false;
         self.client_id
-            .append(&mut mac_str_to_u8_array(&self.iface_mac));
+            .append(&mut mac_str_to_u8_array(&self.src_mac));
         self
     }
 

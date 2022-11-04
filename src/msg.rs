@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use std::net::Ipv4Addr;
 
 use dhcproto::{v4, Decodable, Decoder, Encodable};
@@ -55,15 +57,21 @@ pub struct DhcpV4Message {
     pub lease: Option<DhcpV4Lease>,
     pub config: DhcpV4Config,
     renew_or_rebind: bool,
+    pub(crate) xid: u32,
 }
 
 impl DhcpV4Message {
-    pub fn new(config: &DhcpV4Config, msg_type: DhcpV4MessageType) -> Self {
+    pub fn new(
+        config: &DhcpV4Config,
+        msg_type: DhcpV4MessageType,
+        xid: u32,
+    ) -> Self {
         Self {
             msg_type,
             config: config.clone(),
             lease: None,
             renew_or_rebind: false,
+            xid,
         }
     }
 
@@ -80,15 +88,15 @@ impl DhcpV4Message {
     pub(crate) fn to_dhcp_pkg(&self) -> Result<Vec<u8>, DhcpError> {
         let mut dhcp_msg = v4::Message::default();
         dhcp_msg.set_flags(v4::Flags::default());
+        dhcp_msg.set_xid(self.xid);
 
         if !self.config.host_name.as_str().is_empty() {
             dhcp_msg.set_sname_str(self.config.host_name.clone());
         }
 
-        if !self.config.iface_mac.as_str().is_empty() {
-            dhcp_msg.set_chaddr(&mac_str_to_u8_array(
-                self.config.iface_mac.as_str(),
-            ));
+        if !self.config.src_mac.as_str().is_empty() {
+            dhcp_msg
+                .set_chaddr(&mac_str_to_u8_array(self.config.src_mac.as_str()));
         }
 
         if self.msg_type == DhcpV4MessageType::Discovery {
@@ -193,16 +201,17 @@ impl DhcpV4Message {
         let ret = Self {
             lease: Some(DhcpV4Lease::try_from(&v4_dhcp_msg)?),
             msg_type,
+            xid: v4_dhcp_msg.xid(),
             ..Default::default()
         };
         log::debug!("Got reply DHCP message {:?}", ret);
         Ok(ret)
     }
 
-    pub(crate) fn to_eth_pkg(&self) -> Result<Vec<u8>, DhcpError> {
+    pub(crate) fn to_eth_pkg_broadcast(&self) -> Result<Vec<u8>, DhcpError> {
         let dhcp_msg_buff = self.to_dhcp_pkg()?;
         gen_eth_pkg(
-            &self.config.iface_mac,
+            &self.config.src_mac,
             BROADCAST_MAC_ADDRESS,
             &Ipv4Addr::new(0, 0, 0, 0),
             &Ipv4Addr::new(255, 255, 255, 255),

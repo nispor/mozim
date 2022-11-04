@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ErrorKind {
     Timeout,

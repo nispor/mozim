@@ -4,12 +4,15 @@ use std::process::{Child, Command};
 
 const TEST_DHCPD_NETNS: &str = "mozim_test";
 pub(crate) const TEST_NIC_CLI: &str = "dhcpcli";
+pub(crate) const TEST_PROXY_MAC1: &str = "00:11:22:33:44:55";
 const TEST_NIC_SRV: &str = "dhcpsrv";
 
 const TEST_DHCP_SRV_IP: &str = "192.0.2.1";
 
 pub(crate) const FOO1_STATIC_IP: std::net::Ipv4Addr =
     std::net::Ipv4Addr::new(192, 0, 2, 99);
+pub(crate) const TEST_PROXY_IP1: std::net::Ipv4Addr =
+    std::net::Ipv4Addr::new(192, 0, 2, 51);
 
 const DNSMASQ_OPTS: &str = r#"
 --log-dhcp
@@ -19,6 +22,7 @@ const DNSMASQ_OPTS: &str = r#"
 --dhcp-leasefile=/tmp/mozim_test_dhcpd_lease
 --no-hosts
 --dhcp-host=foo1,192.0.2.99
+--dhcp-host=00:11:22:33:44:55,192.0.2.51
 --dhcp-option=option:dns-server,8.8.8.8,1.1.1.1
 --dhcp-option=option:mtu,1492
 --dhcp-option=option:domain-name,example.com

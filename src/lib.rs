@@ -6,6 +6,7 @@ mod event;
 mod lease;
 mod mac;
 mod msg;
+mod proiscuous;
 mod socket;
 mod time;
 
