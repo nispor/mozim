@@ -5,11 +5,13 @@ use std::net::Ipv4Addr;
 use dhcproto::{v4, Decodable, Decoder, Encodable};
 
 use crate::{
-    mac::{mac_address_to_eth_mac_bytes, mac_str_to_u8_array},
+    mac::{
+        mac_address_to_eth_mac_bytes, mac_str_to_u8_array,
+        BROADCAST_MAC_ADDRESS,
+    },
     DhcpError, DhcpV4Config, DhcpV4Lease, ErrorKind,
 };
 
-const BROADCAST_MAC_ADDRESS: &str = "ff:ff:ff:ff:ff:ff";
 const DEFAULT_TTL: u8 = 128;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -103,6 +105,17 @@ impl DhcpV4Message {
             dhcp_msg
                 .opts_mut()
                 .insert(v4::DhcpOption::MessageType(v4::MessageType::Discover));
+            dhcp_msg
+                .opts_mut()
+                .insert(v4::DhcpOption::ParameterRequestList(vec![
+                    v4::OptionCode::Hostname,
+                    v4::OptionCode::SubnetMask,
+                    v4::OptionCode::Router,
+                    v4::OptionCode::DomainNameServer,
+                    v4::OptionCode::DomainName,
+                    v4::OptionCode::InterfaceMtu,
+                    v4::OptionCode::NTPServers,
+                ]));
         } else if self.msg_type == DhcpV4MessageType::Request {
             dhcp_msg
                 .opts_mut()
@@ -128,6 +141,32 @@ impl DhcpV4Message {
                 log::error!("{}", e);
                 return Err(e);
             }
+            dhcp_msg
+                .opts_mut()
+                .insert(v4::DhcpOption::ParameterRequestList(vec![
+                    v4::OptionCode::Hostname,
+                    v4::OptionCode::SubnetMask,
+                    v4::OptionCode::Router,
+                    v4::OptionCode::DomainNameServer,
+                    v4::OptionCode::DomainName,
+                    v4::OptionCode::InterfaceMtu,
+                    v4::OptionCode::NTPServers,
+                ]));
+        } else if self.msg_type == DhcpV4MessageType::Release {
+            if let Some(lease) = self.lease.as_ref() {
+                dhcp_msg.set_ciaddr(lease.yiaddr);
+                dhcp_msg.opts_mut().insert(v4::DhcpOption::MessageType(
+                    v4::MessageType::Release,
+                ));
+                dhcp_msg
+                    .opts_mut()
+                    .insert(v4::DhcpOption::ServerIdentifier(lease.siaddr));
+            } else {
+                return Err(DhcpError::new(
+                    ErrorKind::Bug,
+                    format!("Got no lease for RELEASE message: {:?}", self),
+                ));
+            }
         } else {
             let e = DhcpError::new(
                 ErrorKind::InvalidArgument,
@@ -136,18 +175,6 @@ impl DhcpV4Message {
             log::error!("{}", e);
             return Err(e);
         }
-
-        dhcp_msg
-            .opts_mut()
-            .insert(v4::DhcpOption::ParameterRequestList(vec![
-                v4::OptionCode::Hostname,
-                v4::OptionCode::SubnetMask,
-                v4::OptionCode::Router,
-                v4::OptionCode::DomainNameServer,
-                v4::OptionCode::DomainName,
-                v4::OptionCode::InterfaceMtu,
-                v4::OptionCode::NTPServers,
-            ]));
 
         dhcp_msg.opts_mut().insert(v4::DhcpOption::ClientIdentifier(
             self.config.client_id.clone(),
@@ -211,14 +238,36 @@ impl DhcpV4Message {
     pub(crate) fn to_eth_pkg_broadcast(&self) -> Result<Vec<u8>, DhcpError> {
         let dhcp_msg_buff = self.to_dhcp_pkg()?;
         gen_eth_pkg(
-            &self.config.src_mac,
-            BROADCAST_MAC_ADDRESS,
+            &mac_address_to_eth_mac_bytes(&self.config.src_mac)?,
+            &BROADCAST_MAC_ADDRESS,
             &Ipv4Addr::new(0, 0, 0, 0),
             &Ipv4Addr::new(255, 255, 255, 255),
             dhcproto::v4::CLIENT_PORT,
             dhcproto::v4::SERVER_PORT,
             &dhcp_msg_buff,
         )
+    }
+
+    pub(crate) fn to_proxy_eth_pkg_unicast(
+        &self,
+    ) -> Result<Vec<u8>, DhcpError> {
+        if let Some(lease) = self.lease.as_ref() {
+            let dhcp_msg_buff = self.to_dhcp_pkg()?;
+            gen_eth_pkg(
+                &mac_address_to_eth_mac_bytes(&self.config.src_mac)?,
+                &lease.srv_mac,
+                &lease.yiaddr,
+                &lease.siaddr,
+                dhcproto::v4::CLIENT_PORT,
+                dhcproto::v4::SERVER_PORT,
+                &dhcp_msg_buff,
+            )
+        } else {
+            Err(DhcpError::new(
+                ErrorKind::Bug,
+                "No lease found for `to_proxy_eth_pkg_unicast()`".to_string(),
+            ))
+        }
     }
 
     pub(crate) fn from_eth_pkg(data: &[u8]) -> Result<Self, DhcpError> {
@@ -236,22 +285,26 @@ impl DhcpV4Message {
             }
             Ok(v) => v,
         };
-        Self::from_dhcp_pkg(pkg.payload)
+        let mut ret = Self::from_dhcp_pkg(pkg.payload)?;
+        if let Some(eth_header) = pkg.link.map(|l| l.to_header()) {
+            if let Some(lease) = ret.lease.as_mut() {
+                lease.srv_mac = eth_header.source;
+            }
+        }
+        Ok(ret)
     }
 }
 
 fn gen_eth_pkg(
-    src_mac: &str,
-    dst_mac: &str,
+    src_mac: &[u8; 6],
+    dst_mac: &[u8; 6],
     src_ip: &Ipv4Addr,
     dst_ip: &Ipv4Addr,
     src_port: u16,
     dst_port: u16,
     payload: &[u8],
 ) -> Result<Vec<u8>, DhcpError> {
-    let src_mac = mac_address_to_eth_mac_bytes(src_mac)?;
-    let dst_mac = mac_address_to_eth_mac_bytes(dst_mac)?;
-    let builder = etherparse::PacketBuilder::ethernet2(src_mac, dst_mac)
+    let builder = etherparse::PacketBuilder::ethernet2(*src_mac, *dst_mac)
         .ipv4(src_ip.octets(), dst_ip.octets(), DEFAULT_TTL)
         .udp(src_port, dst_port);
 
