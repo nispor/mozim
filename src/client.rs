@@ -480,6 +480,30 @@ impl DhcpV4Client {
             DhcpV4Event::LeaseExpired => self.process_lease_expired(),
         }
     }
+
+    pub fn release(&mut self, lease: &DhcpV4Lease) -> Result<(), DhcpError> {
+        let mut dhcp_msg = DhcpV4Message::new(
+            &self.config,
+            DhcpV4MessageType::Release,
+            self.xid,
+        );
+        dhcp_msg.load_lease(lease.clone());
+
+        if self.config.is_proxy {
+            let raw_socket = DhcpRawSocket::new(&self.config)?;
+            raw_socket.send(&dhcp_msg.to_proxy_eth_pkg_unicast()?)?;
+        } else {
+            let udp_socket = DhcpUdpSocket::new(
+                self.config.iface_name.as_str(),
+                &lease.yiaddr,
+                &lease.siaddr,
+                self.config.socket_timeout,
+            )?;
+            udp_socket.send(&dhcp_msg.to_dhcp_pkg()?)?;
+        }
+        self.clean_up();
+        Ok(())
+    }
 }
 
 fn recv_dhcp_msg(

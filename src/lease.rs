@@ -6,6 +6,8 @@ use crate::DhcpError;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct DhcpV4Lease {
+    // Required for sending DHCPRELEASE in proxy mode
+    pub(crate) srv_mac: [u8; 6],
     pub siaddr: Ipv4Addr,
     pub yiaddr: Ipv4Addr,
     pub t1: u32,
@@ -27,6 +29,7 @@ pub struct DhcpV4Lease {
 impl Default for DhcpV4Lease {
     fn default() -> Self {
         Self {
+            srv_mac: [u8::MAX; 6],
             siaddr: Ipv4Addr::new(0, 0, 0, 0),
             yiaddr: Ipv4Addr::new(0, 0, 0, 0),
             t1: 0,

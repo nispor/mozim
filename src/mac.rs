@@ -1,6 +1,10 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use log::error;
 
 use crate::{DhcpError, ErrorKind};
+
+pub(crate) const BROADCAST_MAC_ADDRESS: [u8; 6] = [u8::MAX; 6];
 
 pub(crate) fn mac_str_to_u8_array(mac: &str) -> Vec<u8> {
     let mut mac_bytes = Vec::new();

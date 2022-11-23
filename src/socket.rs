@@ -8,11 +8,12 @@ use std::os::unix::io::RawFd;
 use nix::errno::Errno;
 
 use crate::{
-    bpf::apply_dhcp_bpf, mac::mac_address_to_eth_mac_bytes,
-    proiscuous::enable_promiscuous_mode, DhcpError, DhcpV4Config, ErrorKind,
+    bpf::apply_dhcp_bpf,
+    mac::{mac_address_to_eth_mac_bytes, BROADCAST_MAC_ADDRESS},
+    proiscuous::enable_promiscuous_mode,
+    DhcpError, DhcpV4Config, ErrorKind,
 };
 
-const BROADCAST_MAC_ADDRESS: &str = "ff:ff:ff:ff:ff:ff";
 const PACKET_HOST: u8 = 0; // a packet addressed to the local host
 
 pub(crate) trait DhcpSocket {
@@ -82,9 +83,8 @@ impl DhcpSocket for DhcpRawSocket {
 
         let mut dst_addr: libc::sockaddr_ll = unsafe { std::mem::zeroed() };
         dst_addr.sll_halen = libc::ETH_ALEN as u8;
-        dst_addr.sll_addr[..libc::ETH_ALEN as usize].clone_from_slice(
-            &mac_address_to_eth_mac_bytes(BROADCAST_MAC_ADDRESS)?,
-        );
+        dst_addr.sll_addr[..libc::ETH_ALEN as usize]
+            .clone_from_slice(&BROADCAST_MAC_ADDRESS);
         dst_addr.sll_ifindex = self.config.iface_index as i32;
         let addr_buffer_size: libc::socklen_t =
             std::mem::size_of::<libc::sockaddr_ll>() as libc::socklen_t;

@@ -20,6 +20,7 @@ fn test_dhcpv4_proxy() {
     assert!(lease.is_some());
     if let Some(lease) = lease {
         assert_eq!(lease.yiaddr, TEST_PROXY_IP1);
+        cli.release(&lease).unwrap();
     }
 }
 
