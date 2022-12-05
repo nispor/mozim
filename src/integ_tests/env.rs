@@ -58,35 +58,31 @@ impl Drop for DhcpServerEnv {
 }
 
 fn create_test_net_namespace() {
-    run_cmd(&format!("ip netns add {}", TEST_DHCPD_NETNS));
+    run_cmd(&format!("ip netns add {TEST_DHCPD_NETNS}"));
 }
 
 fn remove_test_net_namespace() {
-    run_cmd_ignore_failure(&format!("ip netns del {}", TEST_DHCPD_NETNS));
+    run_cmd_ignore_failure(&format!("ip netns del {TEST_DHCPD_NETNS}"));
 }
 
 fn create_test_veth_nics() {
     run_cmd(&format!(
-        "ip link add {} type veth peer name {}",
-        TEST_NIC_CLI, TEST_NIC_SRV
+        "ip link add {TEST_NIC_CLI} type veth peer name {TEST_NIC_SRV}"
     ));
-    run_cmd(&format!("ip link set {} up", TEST_NIC_CLI));
+    run_cmd(&format!("ip link set {TEST_NIC_CLI} up"));
     run_cmd(&format!(
-        "ip link set {} netns {}",
-        TEST_NIC_SRV, TEST_DHCPD_NETNS
+        "ip link set {TEST_NIC_SRV} netns {TEST_DHCPD_NETNS}"
     ));
     run_cmd(&format!(
-        "ip netns exec {} ip link set {} up",
-        TEST_DHCPD_NETNS, TEST_NIC_SRV,
+        "ip netns exec {TEST_DHCPD_NETNS} ip link set {TEST_NIC_SRV} up",
     ));
     run_cmd(&format!(
-        "ip netns exec {} ip addr add {}/24 dev {}",
-        TEST_DHCPD_NETNS, TEST_DHCP_SRV_IP, TEST_NIC_SRV,
+        "ip netns exec {TEST_DHCPD_NETNS} ip addr add {TEST_DHCP_SRV_IP}/24 dev {TEST_NIC_SRV}",
     ));
 }
 
 fn remove_test_veth_nics() {
-    run_cmd_ignore_failure(&format!("ip link del {}", TEST_NIC_CLI));
+    run_cmd_ignore_failure(&format!("ip link del {TEST_NIC_CLI}"));
 }
 
 fn start_dhcp_server() -> Child {
@@ -102,7 +98,7 @@ fn start_dhcp_server() -> Child {
         .expect("Failed to start DHCP server");
     std::thread::sleep(std::time::Duration::from_secs(1));
     if let Ok(Some(ret)) = child.try_wait() {
-        panic!("Failed to start DHCP server {:?}", ret);
+        panic!("Failed to start DHCP server {ret:?}");
     }
     child
 }
@@ -117,7 +113,7 @@ fn run_cmd(cmd: &str) -> String {
         Command::new(cmds[0])
             .args(&cmds[1..])
             .output()
-            .unwrap_or_else(|_| panic!("failed to execute command {}", cmd))
+            .unwrap_or_else(|_| panic!("failed to execute command {cmd}"))
             .stdout,
     )
     .expect("Failed to convert file command output to String")
@@ -129,7 +125,7 @@ fn run_cmd_ignore_failure(cmd: &str) -> String {
     match Command::new(cmds[0]).args(&cmds[1..]).output() {
         Ok(o) => String::from_utf8(o.stdout).unwrap_or_default(),
         Err(e) => {
-            eprintln!("Failed to execute command {}: {}", cmd, e);
+            eprintln!("Failed to execute command {cmd}: {e}");
             "".to_string()
         }
     }

@@ -222,7 +222,7 @@ fn bind_raw_socket(
                 libc::close(fd);
                 Err(DhcpError::new(
                     ErrorKind::Bug,
-                    format!("Failed to bind socket: {}", rc),
+                    format!("Failed to bind socket: {rc}"),
                 ))
             }
         }
@@ -302,8 +302,7 @@ fn set_socket_timeout(fd: libc::c_int, timeout: u32) -> Result<(), DhcpError> {
                 ErrorKind::Bug,
                 format!(
                     "Failed to set the send timeout SO_SNDTIMEO to \
-                    socket {}: {}",
-                    fd, rc
+                    socket {fd}: {rc}"
                 ),
             ));
         }
@@ -319,8 +318,7 @@ fn set_socket_timeout(fd: libc::c_int, timeout: u32) -> Result<(), DhcpError> {
                 ErrorKind::Bug,
                 format!(
                     "Failed to set the recv timeout SO_RCVTIMEO to \
-                    socket {}: {}",
-                    fd, rc
+                    socket {fd}: {rc}"
                 ),
             );
             log::error!("{}", e);

@@ -117,7 +117,7 @@ fn get_nispor_iface(iface_name: &str) -> Result<nispor::Iface, DhcpError> {
         Err(e) => {
             return Err(DhcpError::new(
                 ErrorKind::Bug,
-                format!("Faild to retrieve network state: {}", e),
+                format!("Faild to retrieve network state: {e}"),
             ))
         }
     };
@@ -126,7 +126,7 @@ fn get_nispor_iface(iface_name: &str) -> Result<nispor::Iface, DhcpError> {
     } else {
         Err(DhcpError::new(
             ErrorKind::InvalidArgument,
-            format!("Interface {} not found", iface_name),
+            format!("Interface {iface_name} not found"),
         ))
     }
 }

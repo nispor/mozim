@@ -284,18 +284,18 @@ fn proxy(iface_name: &str, mac: &str, timeout: u32) {
                 for event in events {
                     match cli.process(event) {
                         Ok(Some(lease)) => {
-                            println!("{:?}", lease);
+                            println!("{lease:?}");
                         }
                         Ok(None) => (),
                         Err(e) => {
-                            eprintln!("Error {:?}", e);
+                            eprintln!("Error {e:?}");
                             return;
                         }
                     }
                 }
             }
             Err(e) => {
-                eprintln!("Error {:?}", e);
+                eprintln!("Error {e:?}");
                 break;
             }
         }

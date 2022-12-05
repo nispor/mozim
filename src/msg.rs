@@ -164,7 +164,7 @@ impl DhcpV4Message {
             } else {
                 return Err(DhcpError::new(
                     ErrorKind::Bug,
-                    format!("Got no lease for RELEASE message: {:?}", self),
+                    format!("Got no lease for RELEASE message: {self:?}"),
                 ));
             }
         } else {
@@ -200,8 +200,7 @@ impl DhcpV4Message {
                     ErrorKind::InvalidDhcpServerReply,
                     format!(
                         "Failed to parse DHCP message from payload of pkg \
-                        {:?}: {}",
-                        payload, decode_error
+                        {payload:?}: {decode_error}"
                     ),
                 );
                 log::error!("{}", e);
@@ -276,8 +275,7 @@ impl DhcpV4Message {
                 let e = DhcpError::new(
                     ErrorKind::InvalidDhcpServerReply,
                     format!(
-                        "Failed to parse ethernet package to Dhcpv4Offer: {}",
-                        error
+                        "Failed to parse ethernet package to Dhcpv4Offer: {error}"
                     ),
                 );
                 log::error!("{}", e);
