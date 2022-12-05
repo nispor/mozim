@@ -16,5 +16,6 @@ mod integ_tests;
 pub use crate::client::DhcpV4Client;
 pub use crate::config::DhcpV4Config;
 pub use crate::error::{DhcpError, ErrorKind};
+pub use crate::event::DhcpV4Event;
 pub use crate::lease::DhcpV4Lease;
 pub use crate::msg::{DhcpV4Message, DhcpV4MessageType};

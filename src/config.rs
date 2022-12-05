@@ -41,27 +41,30 @@ impl Default for DhcpV4Config {
 }
 
 impl DhcpV4Config {
-    pub fn new(iface_name: &str) -> Result<Self, DhcpError> {
-        let np_iface = get_nispor_iface(iface_name)?;
-        Ok(Self {
-            iface_name: np_iface.name.to_string(),
-            iface_index: np_iface.index,
-            src_mac: np_iface.mac_address,
+    pub fn new(iface_name: &str) -> Self {
+        Self {
+            iface_name: iface_name.to_string(),
             ..Default::default()
-        })
+        }
     }
-    pub fn new_proxy(
-        out_iface_name: &str,
-        proxy_mac: &str,
-    ) -> Result<Self, DhcpError> {
-        let np_iface = get_nispor_iface(out_iface_name)?;
-        Ok(Self {
-            iface_name: np_iface.name.to_string(),
-            iface_index: np_iface.index,
+
+    // Check whether interface exists and resolve iface_index and MAC
+    pub(crate) fn init(&mut self) -> Result<(), DhcpError> {
+        let np_iface = get_nispor_iface(self.iface_name.as_str())?;
+        self.iface_index = np_iface.index;
+        if !self.is_proxy {
+            self.src_mac = np_iface.mac_address;
+        }
+        Ok(())
+    }
+
+    pub fn new_proxy(out_iface_name: &str, proxy_mac: &str) -> Self {
+        Self {
+            iface_name: out_iface_name.to_string(),
             src_mac: proxy_mac.to_string(),
             is_proxy: true,
             ..Default::default()
-        })
+        }
     }
 
     // Set timeout in seconds

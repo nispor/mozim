@@ -54,9 +54,10 @@ impl AsRawFd for DhcpV4Client {
 
 impl DhcpV4Client {
     pub fn init(
-        config: DhcpV4Config,
+        mut config: DhcpV4Config,
         lease: Option<DhcpV4Lease>,
     ) -> Result<Self, DhcpError> {
+        config.init()?;
         let mut event_pool = DhcpEventPool::new()?;
         event_pool.add_timer(config.timeout, DhcpV4Event::Timeout)?;
         let raw_socket = DhcpRawSocket::new(&config)?;
@@ -106,10 +107,7 @@ impl DhcpV4Client {
         self.udp_socket = None;
     }
 
-    pub fn poll(
-        &self,
-        wait_time: isize,
-    ) -> Result<Vec<DhcpV4Event>, DhcpError> {
+    pub fn poll(&self, wait_time: u32) -> Result<Vec<DhcpV4Event>, DhcpError> {
         self.event_pool.poll(wait_time)
     }
 

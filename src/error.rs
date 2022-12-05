@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ErrorKind {
     Timeout,
     InvalidArgument,
@@ -19,6 +19,14 @@ pub struct DhcpError {
 impl DhcpError {
     pub fn new(kind: ErrorKind, msg: String) -> Self {
         Self { kind, msg }
+    }
+
+    pub fn kind(&self) -> ErrorKind {
+        self.kind
+    }
+
+    pub fn msg(&self) -> &str {
+        self.msg.as_str()
     }
 }
 

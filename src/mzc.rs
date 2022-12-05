@@ -8,7 +8,7 @@ use nispor::{
 };
 
 const DEFAULT_METRIC: u32 = 500;
-const POLL_WAIT_TIME: isize = 5;
+const POLL_WAIT_TIME: u32 = 5;
 const APP_NAME: &str = "mzc";
 
 const SUBCOMMAND_RUN: &str = "run";
@@ -124,7 +124,7 @@ fn main() {
 fn run(iface_name: &str, timeout: u32) {
     purge_dhcp_ip_route(iface_name);
 
-    let mut config = DhcpV4Config::new(iface_name).unwrap();
+    let mut config = DhcpV4Config::new(iface_name);
     config.set_host_name("Gris-Laptop");
     config.use_host_name_as_client_id();
     config.set_timeout(timeout);
@@ -274,7 +274,7 @@ fn gen_rt_conf(
 }
 
 fn proxy(iface_name: &str, mac: &str, timeout: u32) {
-    let mut config = DhcpV4Config::new_proxy(iface_name, mac).unwrap();
+    let mut config = DhcpV4Config::new_proxy(iface_name, mac);
     config.set_timeout(timeout);
     let mut cli = DhcpV4Client::init(config, None).unwrap();
 

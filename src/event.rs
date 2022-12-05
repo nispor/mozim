@@ -147,9 +147,19 @@ impl DhcpEventPool {
 
     pub(crate) fn poll(
         &self,
-        wait_time: isize,
+        wait_time: u32,
     ) -> Result<Vec<DhcpV4Event>, DhcpError> {
-        self.epoll.poll(wait_time)
+        match isize::try_from(wait_time) {
+            Ok(i) => self.epoll.poll(i),
+            Err(_) => Err(DhcpError::new(
+                ErrorKind::InvalidArgument,
+                format!(
+                    "Invalid timeout, should be in the range of \
+                            0 - {}",
+                    isize::MAX
+                ),
+            )),
+        }
     }
 }
 
