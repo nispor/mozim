@@ -43,7 +43,7 @@ impl TryFrom<u64> for DhcpV4Event {
             _ => {
                 let e = DhcpError::new(
                     ErrorKind::Bug,
-                    format!("Got unexpected event ID {}", v),
+                    format!("Got unexpected event ID {v}"),
                 );
                 log::error!("{}", e);
                 Err(e)
@@ -180,7 +180,7 @@ impl DhcpEpoll {
             fd: epoll_create().map_err(|e| {
                 let e = DhcpError::new(
                     ErrorKind::Bug,
-                    format!("Failed to epoll_create(): {}", e),
+                    format!("Failed to epoll_create(): {e}"),
                 );
                 log::error!("{}", e);
                 e
@@ -245,7 +245,7 @@ impl DhcpEpoll {
             .map_err(|e| {
                 let e = DhcpError::new(
                     ErrorKind::Bug,
-                    format!("Failed on epoll_wait(): {}", e),
+                    format!("Failed on epoll_wait(): {e}"),
                 );
                 log::error!("{}", e);
                 e

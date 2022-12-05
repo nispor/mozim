@@ -26,7 +26,7 @@ impl DhcpTimerFd {
             TimerFd::new(CLOCK_BOOTTIME, TimerFlags::empty()).map_err(|e| {
                 let e = DhcpError::new(
                     ErrorKind::Bug,
-                    format!("Failed to create timerfd {}", e),
+                    format!("Failed to create timerfd {e}"),
                 );
                 log::error!("{}", e);
                 e
@@ -38,7 +38,7 @@ impl DhcpTimerFd {
         .map_err(|e| {
             let e = DhcpError::new(
                 ErrorKind::Bug,
-                format!("Failed to set timerfd {}", e),
+                format!("Failed to set timerfd {e}"),
             );
             log::error!("{}", e);
             e

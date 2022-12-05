@@ -25,8 +25,7 @@ pub(crate) fn enable_promiscuous_mode(
             return Err(DhcpError::new(
                 ErrorKind::Bug,
                 format!(
-                    "Failed to set socket to promiscuous mode with error: {}",
-                    rc
+                    "Failed to set socket to promiscuous mode with error: {rc}"
                 ),
             ));
         }
