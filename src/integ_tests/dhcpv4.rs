@@ -4,13 +4,13 @@ use crate::{DhcpV4Client, DhcpV4Config, DhcpV4Lease};
 
 use super::env::{DhcpServerEnv, FOO1_STATIC_IP, TEST_NIC_CLI};
 
-const POLL_WAIT_TIME: isize = 5;
+const POLL_WAIT_TIME: u32 = 5;
 
 #[test]
 fn test_dhcpv4_manual_client_id() {
     let _srv = DhcpServerEnv::start();
 
-    let mut config = DhcpV4Config::new(TEST_NIC_CLI).unwrap();
+    let mut config = DhcpV4Config::new(TEST_NIC_CLI);
     config.set_host_name("foo1");
     config.use_host_name_as_client_id();
     let mut cli = DhcpV4Client::init(config, None).unwrap();
