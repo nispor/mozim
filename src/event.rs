@@ -241,19 +241,29 @@ impl DhcpEpoll {
         let mut events: [EpollEvent; EVENT_BUFFER_COUNT] =
             [EpollEvent::empty(); EVENT_BUFFER_COUNT];
 
-        let changed_count = epoll_wait(self.fd, &mut events, 1000 * wait_time)
-            .map_err(|e| {
-                let e = DhcpError::new(
-                    ErrorKind::Bug,
-                    format!("Failed on epoll_wait(): {e}"),
-                );
-                log::error!("{}", e);
-                e
-            })?;
-        let mut ret = Vec::new();
-        for i in &events[..changed_count] {
-            ret.push(DhcpV4Event::try_from(i.data())?);
+        loop {
+            match epoll_wait(self.fd, &mut events, 1000 * wait_time) {
+                Ok(c) => {
+                    let mut ret = Vec::new();
+                    for i in &events[..c] {
+                        ret.push(DhcpV4Event::try_from(i.data())?);
+                    }
+                    return Ok(ret);
+                }
+                Err(e) => match e {
+                    nix::errno::Errno::EINTR | nix::errno::Errno::EAGAIN => {
+                        // retry
+                        continue;
+                    }
+                    _ => {
+                        let e = DhcpError::new(
+                            ErrorKind::Bug,
+                            format!("Failed on epoll_wait(): {e}"),
+                        );
+                        return Err(e);
+                    }
+                },
+            }
         }
-        Ok(ret)
     }
 }
