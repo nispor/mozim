@@ -10,10 +10,6 @@ edition = "2021"
 name = "mozim"
 path = "src/lib.rs"
 
-[[bin]]
-name = "mzc"
-path = "src/mzc.rs"
-
 [dependencies]
 rand = { version = "0.8.5", default-features = false }
 libc = "0.2.132"
@@ -22,6 +18,9 @@ dhcproto = "0.8.0"
 log = "0.4.17"
 etherparse = "0.12.0"
 nix = "0.25.0"
-env_logger = "0.9.0"
-clap = { version = "3.2.17", features = ["cargo"] }
 nispor = "1.2.8"
+futures = { version = "0.3", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+tokio = { version = "1.19", features = ["macros", "rt"] }
+env_logger = "0.9.0"

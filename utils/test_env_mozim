@@ -3,24 +3,28 @@
 PID_FILE="/tmp/test_dnsmasq.pid"
 LEASE_FILE="/tmp/test_dnsmasq.lease"
 IPV4_BLOCK="192.0.2"
+IPV6_BLOCK="2001:db8:a::"
 DHCP_SRV_IP="${IPV4_BLOCK}.1"
+DHCP_SRV_IP6="${IPV6_BLOCK}1"
+
 
 if [ -e $PID_FILE ];then
     sudo kill `cat $PID_FILE`
 fi
 
-if [[ $1 ]]; then
-    sudo ip link del eth1
+if [ "CHK$1" == "CHKrm" ]; then
+    sudo ip link del dhcpcli
     sudo ip netns del mozim
     exit
 fi
 
 sudo ip netns add mozim
-sudo ip link add eth1 type veth peer name eth1.ep
-sudo ip link set eth1 up
-sudo ip link set eth1.ep netns mozim
-sudo ip netns exec mozim ip link set eth1.ep up
-sudo ip netns exec mozim ip addr add ${DHCP_SRV_IP}/24 dev eth1.ep
+sudo ip link add dhcpcli type veth peer name dhcpsrv
+sudo ip link set dhcpcli up
+sudo ip link set dhcpsrv netns mozim
+sudo ip netns exec mozim ip link set dhcpsrv up
+sudo ip netns exec mozim ip addr add ${DHCP_SRV_IP}/24 dev dhcpsrv
+sudo ip netns exec mozim ip -6 addr add ${DHCP_SRV_IP6}/64 dev dhcpsrv
 sudo rm $LEASE_FILE -f
 sudo ip netns exec mozim dnsmasq \
     --log-dhcp \
@@ -35,10 +39,13 @@ sudo ip netns exec mozim dnsmasq \
     --dhcp-option=option:domain-name,example.com\
     --dhcp-option=option:ntp-server,${DHCP_SRV_IP} \
     --keep-in-foreground \
-    --bind-interfaces \
-    --except-interface=lo \
     --clear-on-reload \
-    --listen-address=$DHCP_SRV_IP \
-    --dhcp-range=${IPV4_BLOCK}.2,${IPV4_BLOCK}.50,60 --no-ping
-sudo ip link del eth1
-sudo ip netns del mozim
+    --interface=dhcpsrv \
+    --enable-ra \
+    --dhcp-range=${IPV6_BLOCK}2,${IPV6_BLOCK}fff,ra-names,slaac,64,2m \
+    --dhcp-range=${IPV4_BLOCK}.2,${IPV4_BLOCK}.50,2m \
+    --no-ping
+if [ "CHK$1" == "CHK" ];then
+    sudo ip link del dhcpcli
+    sudo ip netns del mozim
+fi

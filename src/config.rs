@@ -50,7 +50,22 @@ impl DhcpV4Config {
 
     // Check whether interface exists and resolve iface_index and MAC
     pub(crate) fn init(&mut self) -> Result<(), DhcpError> {
-        let np_iface = get_nispor_iface(self.iface_name.as_str())?;
+        // We use thread to invoke nispor which has `tokio::block_on` which
+        // stop our async usage
+        let iface_name = self.iface_name.clone();
+        let np_iface = match std::thread::spawn(move || {
+            get_nispor_iface(iface_name.as_str())
+        })
+        .join()
+        {
+            Ok(n) => n?,
+            Err(e) => {
+                return Err(DhcpError::new(
+                    ErrorKind::Bug,
+                    format!("Failed to invoke nispor thread: {e:?}"),
+                ));
+            }
+        };
         self.iface_index = np_iface.index;
         if !self.is_proxy {
             self.src_mac = np_iface.mac_address;
