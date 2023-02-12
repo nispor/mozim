@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: Apache-2.0
+
 mod bpf;
 mod client;
+mod client_async;
 mod config;
 mod error;
 mod event;
@@ -14,6 +17,7 @@ mod time;
 mod integ_tests;
 
 pub use crate::client::DhcpV4Client;
+pub use crate::client_async::DhcpV4ClientAsync;
 pub use crate::config::DhcpV4Config;
 pub use crate::error::{DhcpError, ErrorKind};
 pub use crate::event::DhcpV4Event;
