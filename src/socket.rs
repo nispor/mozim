@@ -285,10 +285,16 @@ impl DhcpSocket for DhcpUdpSocket {
 }
 
 fn set_socket_timeout(fd: libc::c_int, timeout: u32) -> Result<(), DhcpError> {
-    let tmo = libc::timeval {
-        tv_sec: timeout.into(),
-        tv_usec: 0,
+    let tv_sec: libc::time_t = match timeout.try_into() {
+        Ok(t) => t,
+        Err(e) => {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidArgument,
+                format!("Invalid timeout value {timeout}, error: {e}"),
+            ));
+        }
     };
+    let tmo = libc::timeval { tv_sec, tv_usec: 0 };
     unsafe {
         let rc = libc::setsockopt(
             fd,

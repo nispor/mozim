@@ -32,6 +32,28 @@ jobs:
       if: matrix.rust_version == 'nightly'
       run: cargo clippy -- -D warnings
 
+  rust_build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - build_target: "i686-unknown-linux-gnu"
+          - build_target: "x86_64-unknown-linux-gnu"
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install stable Rus
+      run: |
+        rustup override set stable
+        rustup update stable
+        rustup target add ${{ matrix.build_target }}
+
+    - name: Build test
+      run: cargo build --target ${{ matrix.build_target }}
+
   rust_integ:
     runs-on: ubuntu-latest
 
