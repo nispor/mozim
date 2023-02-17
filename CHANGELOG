@@ -1,0 +1,21 @@
+# Changelog
+## [0.2.0] - 2023-02-12
+### Breaking changes
+ - Change the `DhcpV4Config::new()` to return `DhcpV4Config` instead of result.
+   (ab07930)
+
+### New features
+ - Add async API. (05c04d9)
+
+### Bug fixes
+ - N/A
+
+## [0.1.0] - 2022-12-01
+### Breaking changes
+ - N/A
+
+### New features
+ - Initial release
+
+### Bug fixes
+ - N/A
