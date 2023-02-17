@@ -65,12 +65,17 @@ impl Stream for DhcpV4ClientAsync {
                 ))));
             }
         };
-        share_state.waker = Some(cx.waker().clone());
-        drop(share_state);
+        if share_state.waker.is_none() {
+            share_state.waker = Some(cx.waker().clone());
+            drop(share_state);
+            let fd = self.client.as_raw_fd();
+            let share_state = self.share_state.clone();
+            std::thread::spawn(move || poll_thread(fd, share_state));
+        } else {
+            share_state.waker = Some(cx.waker().clone());
+            drop(share_state);
+        }
 
-        let fd = self.client.as_raw_fd();
-        let share_state = self.share_state.clone();
-        std::thread::spawn(move || poll_thread(fd, share_state));
         Poll::Pending
     }
 }
@@ -97,10 +102,7 @@ impl std::ops::Drop for DhcpV4ClientAsync {
 }
 
 // This function will be invoked in a thread to notify the async executor
-// via `Waker::wake()`. Will quit when any of below conditions:
-//  * Waker is set None.
-//  * Got event and successfully invoked `Waker::wake`
-//  * `poll()` failed (except EAGAIN).
+// via `Waker::wake()`. Will quit when `poll()` failed (except EAGAIN).
 fn poll_thread(fd: RawFd, share_state: Arc<Mutex<ShareState>>) {
     let mut poll_fds = [PollFd::new(
         fd,
@@ -110,45 +112,43 @@ fn poll_thread(fd: RawFd, share_state: Arc<Mutex<ShareState>>) {
             | PollFlags::POLLERR,
     )];
     loop {
-        match nix::poll::poll(&mut poll_fds, POLL_TIMEOUT) {
-            // Timeout, let's check whether waker is None(DHCP client quit);
-            Ok(0) => {
-                if let Ok(s) = share_state.lock() {
-                    if s.waker.is_none() {
-                        log::debug!("Waker is None, stopping poll_thread");
-                        return;
-                    }
-                }
-                continue;
-            }
-            Ok(_) => match share_state.lock() {
-                Ok(mut s) => {
-                    if let Some(waker) = s.waker.take() {
-                        log::debug!(
-                            "poll_thread got event, quitting poll_thread"
-                        );
-                        waker.wake();
-                        return;
-                    } else {
-                        log::debug!("Waker is None, stopping poll_thread");
-                        return;
-                    }
-                }
-                Err(e) => {
-                    log::error!(
-                        "BUG: poll_thread() Failed to acquire lock: {e}"
-                    );
-                    return;
-                }
-            },
-            Err(e) => {
-                if e == nix::errno::Errno::EAGAIN {
+        if share_state.lock().map(|s| s.waker.is_none()).ok() == Some(true) {
+            std::thread::sleep(std::time::Duration::from_millis(
+                POLL_TIMEOUT as u64,
+            ));
+        } else {
+            match nix::poll::poll(&mut poll_fds, POLL_TIMEOUT) {
+                // Timeout, let's check whether waker is None(DHCP client quit);
+                Ok(0) => {
                     continue;
-                } else {
-                    log::error!(
-                        "BUG: poll_thread() got error from poll(): {e}"
-                    );
-                    return;
+                }
+                Ok(_) => match share_state.lock() {
+                    Ok(mut s) => {
+                        if let Some(waker) = s.waker.take() {
+                            log::debug!("poll_thread got event");
+                            waker.wake();
+                        } else {
+                            log::debug!(
+                                "poll_thread got event but Waker is None"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "BUG: poll_thread() Failed to acquire lock: {e}"
+                        );
+                        return;
+                    }
+                },
+                Err(e) => {
+                    if e == nix::errno::Errno::EAGAIN {
+                        continue;
+                    } else {
+                        log::error!(
+                            "BUG: poll_thread() got error from poll(): {e}"
+                        );
+                        return;
+                    }
                 }
             }
         }
