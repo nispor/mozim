@@ -1,4 +1,15 @@
 # Changelog
+## [0.2.1] - 2023-02-17
+### Breaking changes
+ - N/A
+
+### New features
+ - N/A
+
+### Bug fixes
+ - Fix build failuer on i686. (7e877da)
+ - Improve ASYNC API performance. (341dfba)
+
 ## [0.2.0] - 2023-02-12
 ### Breaking changes
  - Change the `DhcpV4Config::new()` to return `DhcpV4Config` instead of result.
