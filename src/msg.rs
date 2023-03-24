@@ -124,9 +124,15 @@ impl DhcpV4Message {
                 if self.renew_or_rebind {
                     dhcp_msg.set_ciaddr(lease.yiaddr);
                 } else {
-                    dhcp_msg
-                        .opts_mut()
-                        .insert(v4::DhcpOption::ServerIdentifier(lease.siaddr));
+                    if lease.srv_id != Ipv4Addr::new(0, 0, 0, 0) {
+                        dhcp_msg.opts_mut().insert(
+                            v4::DhcpOption::ServerIdentifier(lease.srv_id),
+                        );
+                    } else {
+                        dhcp_msg.opts_mut().insert(
+                            v4::DhcpOption::ServerIdentifier(lease.siaddr),
+                        );
+                    }
                     dhcp_msg.opts_mut().insert(
                         v4::DhcpOption::RequestedIpAddress(lease.yiaddr),
                     );
@@ -158,9 +164,15 @@ impl DhcpV4Message {
                 dhcp_msg.opts_mut().insert(v4::DhcpOption::MessageType(
                     v4::MessageType::Release,
                 ));
-                dhcp_msg
-                    .opts_mut()
-                    .insert(v4::DhcpOption::ServerIdentifier(lease.siaddr));
+                if lease.srv_id != Ipv4Addr::new(0, 0, 0, 0) {
+                    dhcp_msg
+                        .opts_mut()
+                        .insert(v4::DhcpOption::ServerIdentifier(lease.srv_id));
+                } else {
+                    dhcp_msg
+                        .opts_mut()
+                        .insert(v4::DhcpOption::ServerIdentifier(lease.siaddr));
+                }
             } else {
                 return Err(DhcpError::new(
                     ErrorKind::Bug,
