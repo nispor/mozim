@@ -18,7 +18,7 @@ dhcproto = "0.9.0"
 log = "0.4.17"
 etherparse = "0.13.0"
 nix = "0.26.0"
-nispor = "1.2.8"
+nispor = "1.2.12"
 futures = { version = "0.3", default-features = false, features = ["std"] }
 
 [dev-dependencies]
