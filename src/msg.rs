@@ -92,11 +92,11 @@ impl DhcpV4Message {
         dhcp_msg.set_flags(v4::Flags::default());
         dhcp_msg.set_xid(self.xid);
 
-        if !self.config.host_name.as_str().is_empty() {
+        if !self.config.host_name.is_empty() {
             dhcp_msg.set_sname_str(self.config.host_name.clone());
         }
 
-        if !self.config.src_mac.as_str().is_empty() {
+        if !self.config.src_mac.is_empty() {
             dhcp_msg
                 .set_chaddr(&mac_str_to_u8_array(self.config.src_mac.as_str()));
         }

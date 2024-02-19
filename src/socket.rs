@@ -101,7 +101,7 @@ impl DhcpSocket for DhcpRawSocket {
                 eth_pkg.as_ptr() as *mut libc::c_void,
                 eth_pkg.len(),
                 0, // flags
-                addr_ptr as *mut libc::sockaddr,
+                addr_ptr,
                 addr_buffer_size,
             );
             log::debug!("Raw socket sent: {} bytes", sent_bytes);
@@ -141,7 +141,7 @@ impl DhcpSocket for DhcpRawSocket {
                 buffer.as_mut_ptr() as *mut libc::c_void,
                 buffer.len(),
                 0, // flags
-                addr_ptr as *mut libc::sockaddr,
+                addr_ptr,
                 &mut addr_buffer_size,
             );
             if rc <= 0 {
@@ -285,6 +285,9 @@ impl DhcpSocket for DhcpUdpSocket {
 }
 
 fn set_socket_timeout(fd: libc::c_int, timeout: u32) -> Result<(), DhcpError> {
+    // suppress clippy warning when compiling on 64bit system, but this
+    // `try_into()` is require on i686 system.
+    #[allow(clippy::unnecessary_fallible_conversions)]
     let tv_sec: libc::time_t = match timeout.try_into() {
         Ok(t) => t,
         Err(e) => {

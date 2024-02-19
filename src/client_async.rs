@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use std::os::fd::BorrowedFd;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -104,8 +105,9 @@ impl std::ops::Drop for DhcpV4ClientAsync {
 // This function will be invoked in a thread to notify the async executor
 // via `Waker::wake()`. Will quit when `poll()` failed (except EAGAIN).
 fn poll_thread(fd: RawFd, share_state: Arc<Mutex<ShareState>>) {
+    let fd = unsafe { BorrowedFd::borrow_raw(fd) };
     let mut poll_fds = [PollFd::new(
-        fd,
+        &fd,
         PollFlags::POLLIN
             | PollFlags::POLLOUT
             | PollFlags::POLLHUP
