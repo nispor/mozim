@@ -1,10 +1,10 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use std::collections::HashMap;
-use std::convert::TryFrom;
+use std::os::fd::BorrowedFd;
 use std::os::unix::io::{AsRawFd, RawFd};
 
-use nix::sys::epoll::{
-    epoll_create, epoll_ctl, epoll_wait, EpollEvent, EpollFlags, EpollOp,
-};
+use nix::sys::epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags};
 
 use crate::{time::DhcpTimerFd, DhcpError, ErrorKind};
 
@@ -83,9 +83,9 @@ pub(crate) struct DhcpEventPool {
 impl Drop for DhcpEventPool {
     fn drop(&mut self) {
         self.remove_all_event();
-        if self.epoll.fd >= 0 {
+        if self.epoll.as_raw_fd() >= 0 {
             unsafe {
-                libc::close(self.epoll.fd as libc::c_int);
+                libc::close(self.epoll.as_raw_fd() as libc::c_int);
             }
         }
     }
@@ -93,11 +93,11 @@ impl Drop for DhcpEventPool {
 
 impl DhcpEventPool {
     pub(crate) fn remove_all_event(&mut self) {
-        for (event, timer_fd) in self.timer_fds.drain() {
-            self.epoll.del_fd(timer_fd.as_raw_fd(), event).ok();
+        for (_, timer_fd) in self.timer_fds.drain() {
+            self.epoll.del_fd(timer_fd.as_raw_fd()).ok();
         }
-        for (event, fd) in self.socket_fds.drain() {
-            self.epoll.del_fd(fd, event).ok();
+        for (_, fd) in self.socket_fds.drain() {
+            self.epoll.del_fd(fd).ok();
         }
     }
 
@@ -140,7 +140,7 @@ impl DhcpEventPool {
         event: DhcpV4Event,
     ) -> Result<(), DhcpError> {
         if let Some(timer_fd) = self.timer_fds.remove(&event) {
-            self.epoll.del_fd(timer_fd.as_raw_fd(), event)?;
+            self.epoll.del_fd(timer_fd.as_raw_fd())?;
         }
         Ok(())
     }
@@ -165,76 +165,72 @@ impl DhcpEventPool {
 
 #[derive(Debug)]
 pub(crate) struct DhcpEpoll {
-    fd: RawFd,
+    fd: Epoll,
 }
 
 impl AsRawFd for DhcpEpoll {
     fn as_raw_fd(&self) -> RawFd {
-        self.fd
+        self.fd.0.as_raw_fd()
     }
 }
 
 impl DhcpEpoll {
     fn new() -> Result<Self, DhcpError> {
         Ok(Self {
-            fd: epoll_create().map_err(|e| {
+            fd: Epoll::new(EpollCreateFlags::empty()).map_err(|e| {
                 let e = DhcpError::new(
                     ErrorKind::Bug,
-                    format!("Failed to epoll_create(): {e}"),
+                    format!("Failed to create Epoll: {e}"),
                 );
-                log::error!("{}", e);
+                log::error!("{e}");
                 e
             })?,
         })
     }
 
     fn add_fd(&self, fd: RawFd, event: DhcpV4Event) -> Result<(), DhcpError> {
-        log::debug!("Adding fd {} to Epoll {}, event {}", fd, self.fd, event);
-        let event = EpollEvent::new(EpollFlags::EPOLLIN, event as u64);
-        epoll_ctl(self.fd, EpollOp::EpollCtlAdd, fd, &mut Some(event)).map_err(
-            |e| {
-                let e = DhcpError::new(
-                    ErrorKind::Bug,
-                    format!(
-                        "Failed to epoll_ctl({}, {:?}, {}, {:?}): {}",
-                        self.fd,
-                        EpollOp::EpollCtlAdd,
-                        fd,
-                        event,
-                        e
-                    ),
-                );
-                log::error!("{}", e);
-                e
-            },
-        )
-    }
-
-    fn del_fd(&self, fd: RawFd, event: DhcpV4Event) -> Result<(), DhcpError> {
+        let fd = unsafe { BorrowedFd::borrow_raw(fd) };
         log::debug!(
-            "Removing fd {} from Epoll {}, event {}",
-            fd,
-            self.fd,
+            "Adding fd {} to Epoll {}, event {}",
+            fd.as_raw_fd(),
+            self.fd.0.as_raw_fd(),
             event
         );
         let event = EpollEvent::new(EpollFlags::EPOLLIN, event as u64);
-        epoll_ctl(self.fd, EpollOp::EpollCtlDel, fd, &mut Some(event)).map_err(
-            |e| {
-                let e = DhcpError::new(
-                    ErrorKind::Bug,
-                    format!(
-                        "Failed to epoll_ctl({}, {:?}, {}, {:?}): {}",
-                        self.fd,
-                        EpollOp::EpollCtlDel,
-                        fd,
-                        event,
-                        e
-                    ),
-                );
-                log::error!("{}", e);
-                e
-            },
-        )
+        self.fd.add(fd, event).map_err(|e| {
+            let e = DhcpError::new(
+                ErrorKind::Bug,
+                format!(
+                    "Failed to add fd {} with event {} to epoll {}: {e}",
+                    fd.as_raw_fd(),
+                    event.data(),
+                    self.fd.0.as_raw_fd()
+                ),
+            );
+            log::error!("{}", e);
+            e
+        })
+    }
+
+    fn del_fd(&self, fd: RawFd) -> Result<(), DhcpError> {
+        let fd = unsafe { BorrowedFd::borrow_raw(fd) };
+        log::debug!(
+            "Removing fd {} from Epoll {}",
+            fd.as_raw_fd(),
+            self.fd.0.as_raw_fd()
+        );
+        self.fd.delete(fd).map_err(|e| {
+            let e = DhcpError::new(
+                ErrorKind::Bug,
+                format!(
+                    "Failed to delete fd {} from epoll {}: {e}",
+                    fd.as_raw_fd(),
+                    self.fd.0.as_raw_fd(),
+                ),
+            );
+            log::error!("{}", e);
+            e
+        })
     }
 
     fn poll(&self, wait_time: isize) -> Result<Vec<DhcpV4Event>, DhcpError> {
@@ -242,7 +238,7 @@ impl DhcpEpoll {
             [EpollEvent::empty(); EVENT_BUFFER_COUNT];
 
         loop {
-            match epoll_wait(self.fd, &mut events, 1000 * wait_time) {
+            match self.fd.wait(&mut events, 1000 * wait_time) {
                 Ok(c) => {
                     let mut ret = Vec::new();
                     for i in &events[..c] {

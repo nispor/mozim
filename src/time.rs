@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+
+use std::os::fd::AsFd;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::time::Duration;
 
@@ -16,7 +19,7 @@ pub(crate) struct DhcpTimerFd {
 
 impl AsRawFd for DhcpTimerFd {
     fn as_raw_fd(&self) -> RawFd {
-        self.fd.as_raw_fd()
+        self.fd.as_fd().as_raw_fd()
     }
 }
 
