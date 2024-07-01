@@ -509,10 +509,18 @@ fn recv_dhcp_msg(
     expected: DhcpV4MessageType,
     xid: u32,
 ) -> Result<Option<DhcpV4Lease>, DhcpError> {
-    let buffer: Vec<u8> = socket.recv()?;
     let reply_dhcp_msg = if socket.is_raw() {
-        DhcpV4Message::from_eth_pkg(&buffer)?
+        loop {
+            let buffer: Vec<u8> = socket.recv()?;
+            let pkg = DhcpV4Message::from_eth_pkg(&buffer);
+            if pkg.is_ok() {
+                break pkg;
+            } else {
+                log::trace!("Dropping non-DHCP package");
+            }
+        }?
     } else {
+        let buffer: Vec<u8> = socket.recv()?;
         DhcpV4Message::from_dhcp_pkg(&buffer)?
     };
     if reply_dhcp_msg.xid != xid {

@@ -295,6 +295,30 @@ impl DhcpV4Message {
             }
             Ok(v) => v,
         };
+
+        let ip = pkg.ip.unwrap();
+        let transport = pkg.transport.unwrap();
+        let is_ipv4 = match ip {
+            etherparse::InternetSlice::Ipv4(_, _) => true,
+            _ => false,
+        };
+        let matches_dhcp_ports = match transport {
+            etherparse::TransportSlice::Udp(udp) => {
+                let sport = udp.source_port();
+                let dport = udp.destination_port();
+                (sport == 67 || sport == 68) && (dport == 67 || dport == 68)
+            }
+            _ => false,
+        };
+        if !(is_ipv4 && matches_dhcp_ports) {
+            let e = DhcpError::new(
+                ErrorKind::InvalidDhcpServerReply,
+                format!("Invalid DHCP package"),
+            );
+            log::error!("{}", e);
+            return Err(e);
+        }
+
         let mut ret = Self::from_dhcp_pkg(pkg.payload)?;
         if let Some(eth_header) = pkg.link.map(|l| l.to_header()) {
             if let Some(lease) = ret.lease.as_mut() {
