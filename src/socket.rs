@@ -50,6 +50,8 @@ impl DhcpRawSocket {
         let eth_protocol = libc::ETH_P_ALL;
         let raw_fd = create_raw_socket(eth_protocol)?;
 
+        apply_dhcp_bpf(raw_fd)?;
+
         bind_raw_socket(raw_fd, eth_protocol, iface_index, &config.src_mac)?;
 
         if config.is_proxy {
@@ -57,8 +59,6 @@ impl DhcpRawSocket {
         }
 
         set_socket_timeout(raw_fd, config.socket_timeout)?;
-
-        apply_dhcp_bpf(raw_fd)?;
         log::debug!("Raw socket created {}", raw_fd);
         Ok(DhcpRawSocket {
             raw_fd,
