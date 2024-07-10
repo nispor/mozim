@@ -138,13 +138,16 @@ impl DhcpV4Client {
             return Err(e);
         };
         let lease =
-            match recv_dhcp_msg(socket, DhcpV4MessageType::Offer, self.xid)? {
-                Some(l) => l,
-                None => return Ok(None),
+            match recv_dhcp_msg(socket, DhcpV4MessageType::Offer, self.xid) {
+                Ok(Some(l)) => l,
+                Ok(None) => return Ok(None),
+                Err(e) => {
+                    log::info!("Ignoring invalid DHCP package: {e}");
+                    return Ok(None);
+                }
             };
         self.phase = DhcpV4Phase::Request;
         socket.send(&self.gen_request_pkg(&lease).to_eth_pkg_broadcast()?)?;
-        // TODO: Handle retry on failure
         Ok(None)
     }
 
@@ -175,9 +178,13 @@ impl DhcpV4Client {
             return Err(e);
         };
         let lease =
-            match recv_dhcp_msg(socket, DhcpV4MessageType::Ack, self.xid)? {
-                Some(l) => l,
-                None => return Ok(None),
+            match recv_dhcp_msg(socket, DhcpV4MessageType::Ack, self.xid) {
+                Ok(Some(l)) => l,
+                Ok(None) => return Ok(None),
+                Err(e) => {
+                    log::info!("Ignoring invalid DHCP package: {e}");
+                    return Ok(None);
+                }
             };
         self.clean_up();
         self.lease = Some(lease.clone());
