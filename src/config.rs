@@ -18,7 +18,6 @@ pub struct DhcpV4Config {
     pub(crate) client_id: Vec<u8>,
     pub(crate) host_name: String,
     // TODO: Support allow list and deny list for DHCP servers.
-    pub(crate) use_host_name_as_client_id: bool,
     pub(crate) timeout: u32,
     pub(crate) socket_timeout: u32,
     pub(crate) is_proxy: bool,
@@ -32,7 +31,6 @@ impl Default for DhcpV4Config {
             src_mac: String::new(),
             client_id: Vec::new(),
             host_name: String::new(),
-            use_host_name_as_client_id: false,
             timeout: DEFAULT_TIMEOUT,
             socket_timeout: DEFAULT_SOCKET_TIMEOUT,
             is_proxy: false,
@@ -95,20 +93,30 @@ impl DhcpV4Config {
 
     pub fn use_mac_as_client_id(&mut self) -> &mut Self {
         self.client_id = vec![ARP_HW_TYPE_ETHERNET];
-        self.use_host_name_as_client_id = false;
         self.client_id
             .append(&mut mac_str_to_u8_array(&self.src_mac));
         self
     }
 
     pub fn use_host_name_as_client_id(&mut self) -> &mut Self {
+        if !self.host_name.is_empty() {
+            // RFC 2132: 9.14. Client-identifier
+            // Type 0 is used when not using hardware address
+            self.client_id = vec![0];
+            // The RFC never mentioned the NULL terminator for string.
+            // TODO: Need to check with dnsmasq implementation
+            self.client_id.extend_from_slice(self.host_name.as_bytes());
+        }
+        self
+    }
+
+    pub fn set_client_id(&mut self, client_id_type: u8, client_id: &[u8]) -> &mut Self {
         // RFC 2132: 9.14. Client-identifier
         // Type 0 is used when not using hardware address
-        self.client_id = vec![0];
+        self.client_id = vec![client_id_type];
         // The RFC never mentioned the NULL terminator for string.
         // TODO: Need to check with dnsmasq implementation
-        self.client_id.extend_from_slice(self.host_name.as_bytes());
-        self.use_host_name_as_client_id = true;
+        self.client_id.extend_from_slice(client_id);
         self
     }
 }

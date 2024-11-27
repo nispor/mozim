@@ -191,7 +191,7 @@ impl DhcpV4Message {
         dhcp_msg.opts_mut().insert(v4::DhcpOption::ClientIdentifier(
             self.config.client_id.clone(),
         ));
-        if self.config.use_host_name_as_client_id {
+        if !self.config.host_name.is_empty() {
             dhcp_msg.opts_mut().insert(v4::DhcpOption::Hostname(
                 self.config.host_name.clone(),
             ));
