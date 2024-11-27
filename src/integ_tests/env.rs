@@ -9,31 +9,15 @@ const TEST_NIC_SRV: &str = "dhcpsrv";
 
 const TEST_DHCP_SRV_IP: &str = "192.0.2.1";
 
+pub(crate) const FOO1_HOSTNAME: &str = "foo1";
+pub(crate) const FOO1_CLIENT_ID: &str = "0123456789123456012345678912345601234567891234560123456789123456";
+
 pub(crate) const FOO1_STATIC_IP: std::net::Ipv4Addr =
     std::net::Ipv4Addr::new(192, 0, 2, 99);
+pub(crate) const FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID: std::net::Ipv4Addr =
+    std::net::Ipv4Addr::new(192, 0, 2, 96);
 pub(crate) const TEST_PROXY_IP1: std::net::Ipv4Addr =
     std::net::Ipv4Addr::new(192, 0, 2, 51);
-
-const DNSMASQ_OPTS: &str = r#"
---log-dhcp
---keep-in-foreground
---no-daemon
---conf-file=/dev/null
---dhcp-leasefile=/tmp/mozim_test_dhcpd_lease
---no-hosts
---dhcp-host=foo1,192.0.2.99
---dhcp-host=00:11:22:33:44:55,192.0.2.51
---dhcp-option=option:dns-server,8.8.8.8,1.1.1.1
---dhcp-option=option:mtu,1492
---dhcp-option=option:domain-name,example.com
---dhcp-option=option:ntp-server,192.0.2.1
---keep-in-foreground
---bind-interfaces
---except-interface=lo
---clear-on-reload
---listen-address=192.0.2.1
---dhcp-range=192.0.2.2,192.0.2.50,60 --no-ping
-"#;
 
 #[derive(Debug)]
 pub(crate) struct DhcpServerEnv {
@@ -86,10 +70,33 @@ fn remove_test_veth_nics() {
 }
 
 fn start_dhcp_server() -> Child {
+    let dnsmasq_opts = format!(r#"
+        --log-dhcp
+        --keep-in-foreground
+        --no-daemon
+        --conf-file=/dev/null
+        --dhcp-leasefile=/tmp/mozim_test_dhcpd_lease
+        --no-hosts
+        --dhcp-host=id:{FOO1_CLIENT_ID},{FOO1_STATIC_IP},{FOO1_HOSTNAME}
+        --dhcp-host=id:{FOO1_HOSTNAME},{FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID}
+        --dhcp-host={TEST_PROXY_MAC1},{TEST_PROXY_IP1}
+        --dhcp-option=option:dns-server,8.8.8.8,1.1.1.1
+        --dhcp-option=option:mtu,1492
+        --dhcp-option=option:domain-name,example.com
+        --dhcp-option=option:ntp-server,192.0.2.1
+        --keep-in-foreground
+        --bind-interfaces
+        --except-interface=lo
+        --clear-on-reload
+        --listen-address=192.0.2.1
+        --dhcp-range=192.0.2.2,192.0.2.50,60 --no-ping
+        "#);
+
+
     let cmd = format!(
         "ip netns exec {} dnsmasq {}",
         TEST_DHCPD_NETNS,
-        DNSMASQ_OPTS.replace('\n', " ")
+        dnsmasq_opts.replace('\n', " ")
     );
     let cmds: Vec<&str> = cmd.split(' ').collect();
     let mut child = Command::new(cmds[0])
