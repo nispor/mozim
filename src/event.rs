@@ -83,11 +83,6 @@ pub(crate) struct DhcpEventPool {
 impl Drop for DhcpEventPool {
     fn drop(&mut self) {
         self.remove_all_event();
-        if self.epoll.as_raw_fd() >= 0 {
-            unsafe {
-                libc::close(self.epoll.as_raw_fd() as libc::c_int);
-            }
-        }
     }
 }
 
