@@ -102,10 +102,10 @@ impl DhcpV4Config {
         if !self.host_name.is_empty() {
             // RFC 2132: 9.14. Client-identifier
             // Type 0 is used when not using hardware address
-            self.client_id = vec![0];
             // The RFC never mentioned the NULL terminator for string.
             // TODO: Need to check with dnsmasq implementation
-            self.client_id.extend_from_slice(self.host_name.as_bytes());
+            let host_name = self.host_name.clone();
+            self.set_client_id(0, host_name.as_bytes());
         }
         self
     }
@@ -116,10 +116,7 @@ impl DhcpV4Config {
         client_id: &[u8],
     ) -> &mut Self {
         // RFC 2132: 9.14. Client-identifier
-        // Type 0 is used when not using hardware address
         self.client_id = vec![client_id_type];
-        // The RFC never mentioned the NULL terminator for string.
-        // TODO: Need to check with dnsmasq implementation
         self.client_id.extend_from_slice(client_id);
         self
     }
