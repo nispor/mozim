@@ -110,7 +110,11 @@ impl DhcpV4Config {
         self
     }
 
-    pub fn set_client_id(&mut self, client_id_type: u8, client_id: &[u8]) -> &mut Self {
+    pub fn set_client_id(
+        &mut self,
+        client_id_type: u8,
+        client_id: &[u8],
+    ) -> &mut Self {
         // RFC 2132: 9.14. Client-identifier
         // Type 0 is used when not using hardware address
         self.client_id = vec![client_id_type];
