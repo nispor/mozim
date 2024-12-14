@@ -24,5 +24,5 @@ TODO:
 # The `eth1.ep` is DHCP server interface running dnsmasq in `mozim` network
 # namespace.
 sudo ./utils/test_env_mozim &
-cargo run
+cargo run --example mozim_async
 ```
