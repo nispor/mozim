@@ -38,6 +38,22 @@ impl Default for DhcpV4Phase {
     }
 }
 
+impl std::fmt::Display for DhcpV4Phase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Done => "done",
+                Self::Discovery => "discovery",
+                Self::Request => "request",
+                Self::Renew => "renew",
+                Self::Rebind => "rebind",
+            }
+        )
+    }
+}
+
 #[derive(Debug)]
 pub struct DhcpV4Client {
     config: DhcpV4Config,
@@ -494,11 +510,25 @@ impl DhcpV4Client {
                 DhcpV4Phase::Discovery => self.process_discovery(),
                 DhcpV4Phase::Request => self.process_request(),
                 DhcpV4Phase::Rebind => self.process_rebind_recv(),
-                _ => todo!(),
+                _ => {
+                    log::error!(
+                        "BUG: Got in-coming packet on raw socket \
+                        with unexpected phase {}",
+                        self.phase
+                    );
+                    Ok(None)
+                }
             },
             DhcpV4Event::UdpPackageIn => match self.phase {
                 DhcpV4Phase::Renew => self.process_renew_recv(),
-                _ => todo!(),
+                _ => {
+                    log::error!(
+                        "BUG: Got in-coming packet on UDP socket \
+                        with unexpected phase {}",
+                        self.phase
+                    );
+                    Ok(None)
+                }
             },
             DhcpV4Event::RequestTimeout => self.process_request_timeout(),
             DhcpV4Event::DiscoveryTimeout => self.process_discovery_timeout(),

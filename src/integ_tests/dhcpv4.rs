@@ -22,8 +22,6 @@ fn test_dhcpv4_manual_client_id() {
 
         let lease = get_lease(&mut cli);
 
-        println!("HAHA {:?}", lease);
-
         assert!(lease.is_some());
         if let Some(lease) = lease {
             // Even though we didn't send it in the DHCP request, dnsmasq should
