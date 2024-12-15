@@ -6,5 +6,9 @@ mod dhcpv4;
 mod dhcpv4_async;
 #[cfg(test)]
 mod dhcpv4_proxy;
+#[cfg(test)]
+mod dhcpv6;
+#[cfg(test)]
+mod dhcpv6_async;
 
 mod env;

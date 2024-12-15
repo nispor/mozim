@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::ffi::CString;
-use std::net::{Ipv4Addr, UdpSocket};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV6, UdpSocket};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::io::RawFd;
 
@@ -13,6 +13,8 @@ use crate::{
     proiscuous::enable_promiscuous_mode,
     DhcpError, DhcpV4Config, ErrorKind,
 };
+
+pub(crate) const DEFAULT_SOCKET_TIMEOUT: u32 = 5;
 
 const PACKET_HOST: u8 = 0; // a packet addressed to the local host
 
@@ -164,8 +166,8 @@ impl DhcpSocket for DhcpRawSocket {
                 return Err(e);
             }
             log::debug!("Raw socket received {:?}", &buffer[..rc as usize]);
+            Ok(buffer[..rc as usize].to_vec())
         }
-        Ok(buffer.to_vec())
     }
 }
 
@@ -264,6 +266,40 @@ impl DhcpUdpSocket {
 
         Ok(Self { socket })
     }
+
+    pub(crate) fn new_v6(
+        iface_index: u32,
+        src_ip: &Ipv6Addr,
+        socket_timeout: u32,
+    ) -> Result<Self, DhcpError> {
+        let socket = UdpSocket::bind(SocketAddrV6::new(
+            *src_ip,
+            dhcproto::v6::CLIENT_PORT,
+            0,
+            iface_index,
+        ))?;
+        log::debug!("UDP socket bind to {:?}", socket);
+        socket.set_read_timeout(Some(std::time::Duration::from_secs(
+            socket_timeout.into(),
+        )))?;
+        socket.set_write_timeout(Some(std::time::Duration::from_secs(
+            socket_timeout.into(),
+        )))?;
+
+        Ok(Self { socket })
+    }
+
+    pub(crate) fn send_to_v6(
+        &self,
+        dst_ip: &Ipv6Addr,
+        buff: &[u8],
+    ) -> Result<(), DhcpError> {
+        self.socket.send_to(
+            buff,
+            SocketAddrV6::new(*dst_ip, dhcproto::v6::SERVER_PORT, 0, 0),
+        )?;
+        Ok(())
+    }
 }
 
 impl DhcpSocket for DhcpUdpSocket {
@@ -279,8 +315,8 @@ impl DhcpSocket for DhcpUdpSocket {
     fn recv(&self) -> Result<Vec<u8>, DhcpError> {
         // TODO: Add support of `Maximum DHCP Message Size` option
         let mut buffer = [0u8; 1500];
-        self.socket.recv(&mut buffer)?;
-        Ok(buffer.to_vec())
+        let received = self.socket.recv(&mut buffer)?;
+        Ok(buffer[..received].to_vec())
     }
 }
 

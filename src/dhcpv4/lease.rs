@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use std::net::Ipv4Addr;
 
 use dhcproto::{v4, v4::DhcpOption};
@@ -86,7 +88,7 @@ impl std::convert::TryFrom<&v4::Message> for DhcpV4Lease {
                 DhcpOption::Router(v) => {
                     ret.gateways = Some(v.clone());
                 }
-                DhcpOption::NTPServers(v) => {
+                DhcpOption::NtpServers(v) => {
                     ret.ntp_srvs = Some(v.clone());
                 }
                 DhcpOption::Hostname(v) => {

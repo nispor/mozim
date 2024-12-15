@@ -16,6 +16,12 @@ TODO:
  * Handle vendor difference: https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/issues/848
  * Support multiple DHCP servers with `DHCPNAK` reply.
  * Support DHCPNAK
+ * Support `DHCPDECLINE`: Client to server indicating network address is
+   already in use.
+ * Support `DHCPINFORM`: Client to server, asking only for local configuration
+   parameters; client already has externally configured network address.
+ * Rate control -- Token bucket (RFC 2698)
+ * Initial sleep before discovery/solicit(need check RFC)
 
 # Try out
 
@@ -24,5 +30,6 @@ TODO:
 # The `eth1.ep` is DHCP server interface running dnsmasq in `mozim` network
 # namespace.
 sudo ./utils/test_env_mozim &
-cargo run --example mozim_async
+cargo run --example mozim_dhcpv4_sync
+cargo run --example mozim_dhcpv6_sync
 ```
