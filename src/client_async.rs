@@ -13,7 +13,7 @@ use nix::poll::{PollFd, PollFlags};
 
 use crate::{DhcpError, DhcpV4Client, DhcpV4Config, DhcpV4Lease, ErrorKind};
 
-const POLL_TIMEOUT: libc::c_int = 1000; // milliseconds
+const POLL_TIMEOUT: u16 = 1000; // milliseconds
 
 #[derive(Debug)]
 struct ShareState {
@@ -107,7 +107,7 @@ impl std::ops::Drop for DhcpV4ClientAsync {
 fn poll_thread(fd: RawFd, share_state: Arc<Mutex<ShareState>>) {
     let fd = unsafe { BorrowedFd::borrow_raw(fd) };
     let mut poll_fds = [PollFd::new(
-        &fd,
+        fd,
         PollFlags::POLLIN
             | PollFlags::POLLOUT
             | PollFlags::POLLHUP

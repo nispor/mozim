@@ -233,7 +233,7 @@ impl DhcpEpoll {
             [EpollEvent::empty(); EVENT_BUFFER_COUNT];
 
         loop {
-            match self.fd.wait(&mut events, 1000 * wait_time) {
+            match self.fd.wait(&mut events, 1000 * wait_time as u16) {
                 Ok(c) => {
                     let mut ret = Vec::new();
                     for i in &events[..c] {
