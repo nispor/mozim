@@ -114,7 +114,7 @@ impl DhcpV4Message {
                     v4::OptionCode::DomainNameServer,
                     v4::OptionCode::DomainName,
                     v4::OptionCode::InterfaceMtu,
-                    v4::OptionCode::NTPServers,
+                    v4::OptionCode::NtpServers,
                 ]));
         } else if self.msg_type == DhcpV4MessageType::Request {
             dhcp_msg
@@ -156,7 +156,7 @@ impl DhcpV4Message {
                     v4::OptionCode::DomainNameServer,
                     v4::OptionCode::DomainName,
                     v4::OptionCode::InterfaceMtu,
-                    v4::OptionCode::NTPServers,
+                    v4::OptionCode::NtpServers,
                 ]));
         } else if self.msg_type == DhcpV4MessageType::Release {
             if let Some(lease) = self.lease.as_ref() {

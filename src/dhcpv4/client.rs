@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::os::unix::io::{AsRawFd, RawFd};
+use std::time::Duration;
 
 use rand::Rng;
 
-use crate::{
-    event::{DhcpEventPool, DhcpV4Event},
-    socket::{DhcpRawSocket, DhcpSocket, DhcpUdpSocket},
+use super::{
+    event::DhcpV4Event,
     time::{gen_dhcp_request_delay, gen_renew_rebind_times},
+};
+use crate::{
+    event::DhcpEventPool,
+    socket::{DhcpRawSocket, DhcpSocket, DhcpUdpSocket},
     DhcpError, DhcpV4Config, DhcpV4Lease, DhcpV4Message, DhcpV4MessageType,
     ErrorKind,
 };
@@ -37,7 +41,7 @@ impl Default for DhcpV4Phase {
 #[derive(Debug)]
 pub struct DhcpV4Client {
     config: DhcpV4Config,
-    event_pool: DhcpEventPool,
+    event_pool: DhcpEventPool<DhcpV4Event>,
     lease: Option<DhcpV4Lease>,
     phase: DhcpV4Phase,
     raw_socket: Option<DhcpRawSocket>,
@@ -59,7 +63,10 @@ impl DhcpV4Client {
     ) -> Result<Self, DhcpError> {
         config.init()?;
         let mut event_pool = DhcpEventPool::new()?;
-        event_pool.add_timer(config.timeout, DhcpV4Event::Timeout)?;
+        event_pool.add_timer(
+            Duration::from_secs(config.timeout.into()),
+            DhcpV4Event::Timeout,
+        )?;
         let raw_socket = DhcpRawSocket::new(&config)?;
         event_pool
             .add_socket(raw_socket.as_raw_fd(), DhcpV4Event::RawPackageIn)?;
@@ -68,7 +75,7 @@ impl DhcpV4Client {
 
         let (dhcp_msg, phase) = if let Some(lease) = &lease {
             event_pool.add_timer(
-                gen_dhcp_request_delay(0),
+                Duration::from_secs(gen_dhcp_request_delay(0).into()),
                 DhcpV4Event::RequestTimeout,
             )?;
             let mut dhcp_msg =
@@ -77,7 +84,7 @@ impl DhcpV4Client {
             (dhcp_msg, DhcpV4Phase::Request)
         } else {
             event_pool.add_timer(
-                gen_dhcp_request_delay(0),
+                Duration::from_secs(gen_dhcp_request_delay(0).into()),
                 DhcpV4Event::DiscoveryTimeout,
             )?;
             (
@@ -156,12 +163,22 @@ impl DhcpV4Client {
         lease: &DhcpV4Lease,
     ) -> Result<(), DhcpError> {
         let t = gen_renew_rebind_times(lease.t1, lease.t2, lease.lease_time);
-        self.event_pool.add_timer(t[0], DhcpV4Event::Renew)?;
-        self.event_pool.add_timer(t[1], DhcpV4Event::RenewRetry)?;
-        self.event_pool.add_timer(t[2], DhcpV4Event::Rebind)?;
-        self.event_pool.add_timer(t[3], DhcpV4Event::RebindRetry)?;
         self.event_pool
-            .add_timer(lease.lease_time, DhcpV4Event::LeaseExpired)?;
+            .add_timer(Duration::from_secs(t[0].into()), DhcpV4Event::Renew)?;
+        self.event_pool.add_timer(
+            Duration::from_secs(t[1].into()),
+            DhcpV4Event::RenewRetry,
+        )?;
+        self.event_pool
+            .add_timer(Duration::from_secs(t[2].into()), DhcpV4Event::Rebind)?;
+        self.event_pool.add_timer(
+            Duration::from_secs(t[3].into()),
+            DhcpV4Event::RebindRetry,
+        )?;
+        self.event_pool.add_timer(
+            Duration::from_secs(lease.lease_time.into()),
+            DhcpV4Event::LeaseExpired,
+        )?;
         Ok(())
     }
 
@@ -202,7 +219,9 @@ impl DhcpV4Client {
             self.retry_count = 0;
             self.phase = DhcpV4Phase::Discovery;
             self.event_pool.add_timer(
-                gen_dhcp_request_delay(self.retry_count),
+                Duration::from_secs(
+                    gen_dhcp_request_delay(self.retry_count).into(),
+                ),
                 DhcpV4Event::DiscoveryTimeout,
             )?;
             if let Some(raw_socket) = &self.raw_socket {
@@ -219,7 +238,9 @@ impl DhcpV4Client {
         } else {
             self.retry_count += 1;
             self.event_pool.add_timer(
-                gen_dhcp_request_delay(self.retry_count),
+                Duration::from_secs(
+                    gen_dhcp_request_delay(self.retry_count).into(),
+                ),
                 DhcpV4Event::RequestTimeout,
             )?;
             if let Some(raw_socket) = &self.raw_socket {
@@ -252,7 +273,9 @@ impl DhcpV4Client {
         self.event_pool.del_timer(DhcpV4Event::RequestTimeout)?;
         self.retry_count += 1;
         self.event_pool.add_timer(
-            gen_dhcp_request_delay(self.retry_count),
+            Duration::from_secs(
+                gen_dhcp_request_delay(self.retry_count).into(),
+            ),
             DhcpV4Event::DiscoveryTimeout,
         )?;
         if let Some(raw_socket) = &self.raw_socket {
@@ -439,13 +462,15 @@ impl DhcpV4Client {
         &mut self,
     ) -> Result<Option<DhcpV4Lease>, DhcpError> {
         self.clean_up();
-        self.event_pool
-            .add_timer(self.config.timeout, DhcpV4Event::Timeout)?;
+        self.event_pool.add_timer(
+            Duration::from_secs(self.config.timeout.into()),
+            DhcpV4Event::Timeout,
+        )?;
         let raw_socket = DhcpRawSocket::new(&self.config)?;
         self.event_pool
             .add_socket(raw_socket.as_raw_fd(), DhcpV4Event::RawPackageIn)?;
         self.event_pool.add_timer(
-            gen_dhcp_request_delay(0),
+            Duration::from_secs(gen_dhcp_request_delay(0).into()),
             DhcpV4Event::DiscoveryTimeout,
         )?;
         let dhcp_msg = DhcpV4Message::new(

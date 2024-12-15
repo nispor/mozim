@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{mac::mac_str_to_u8_array, DhcpError, ErrorKind};
-
-use nispor::{NetState, NetStateFilter, NetStateIfaceFilter};
+use crate::{
+    mac::mac_str_to_u8_array, nispor::get_nispor_iface,
+    socket::DEFAULT_SOCKET_TIMEOUT, DhcpError,
+};
 
 // https://www.iana.org/assignments/arp-parameters/arp-parameters.xhtml#arp-parameters-2
 const ARP_HW_TYPE_ETHERNET: u8 = 1;
 
 const DEFAULT_TIMEOUT: u32 = 120;
-const DEFAULT_SOCKET_TIMEOUT: u32 = 5;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct DhcpV4Config {
@@ -48,22 +48,7 @@ impl DhcpV4Config {
 
     // Check whether interface exists and resolve iface_index and MAC
     pub(crate) fn init(&mut self) -> Result<(), DhcpError> {
-        // We use thread to invoke nispor which has `tokio::block_on` which
-        // stop our async usage
-        let iface_name = self.iface_name.clone();
-        let np_iface = match std::thread::spawn(move || {
-            get_nispor_iface(iface_name.as_str())
-        })
-        .join()
-        {
-            Ok(n) => n?,
-            Err(e) => {
-                return Err(DhcpError::new(
-                    ErrorKind::Bug,
-                    format!("Failed to invoke nispor thread: {e:?}"),
-                ));
-            }
-        };
+        let np_iface = get_nispor_iface(self.iface_name.as_str(), false)?;
         self.iface_index = np_iface.index;
         if !self.is_proxy {
             self.src_mac = np_iface.mac_address;
@@ -119,38 +104,5 @@ impl DhcpV4Config {
         self.client_id = vec![client_id_type];
         self.client_id.extend_from_slice(client_id);
         self
-    }
-}
-
-fn get_nispor_iface(iface_name: &str) -> Result<nispor::Iface, DhcpError> {
-    if iface_name.is_empty() {
-        let e = DhcpError::new(
-            ErrorKind::InvalidArgument,
-            "Interface name not defined".to_string(),
-        );
-        log::error!("{}", e);
-        return Err(e);
-    }
-    let mut filter = NetStateFilter::minimum();
-    let mut iface_filter = NetStateIfaceFilter::minimum();
-    iface_filter.iface_name = Some(iface_name.to_string());
-    filter.iface = Some(iface_filter);
-
-    let net_state = match NetState::retrieve_with_filter(&filter) {
-        Ok(s) => s,
-        Err(e) => {
-            return Err(DhcpError::new(
-                ErrorKind::Bug,
-                format!("Faild to retrieve network state: {e}"),
-            ))
-        }
-    };
-    if let Some(iface) = net_state.ifaces.get(iface_name) {
-        Ok(iface.clone())
-    } else {
-        Err(DhcpError::new(
-            ErrorKind::InvalidArgument,
-            format!("Interface {iface_name} not found"),
-        ))
     }
 }
