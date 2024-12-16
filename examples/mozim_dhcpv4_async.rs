@@ -15,13 +15,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     config.set_timeout(60);
     let mut cli = DhcpV4ClientAsync::init(config, None).unwrap();
 
-    while let Some(Ok(lease)) = cli.next().await {
-        // You need to code to apply the IP address in lease to this NIC, so
-        // follow up renew can work.
-        println!("Got lease {lease:?}");
+    loop {
+        if let Some(Ok(lease)) = cli.next().await {
+            // You need to code to apply the IP address in lease to this NIC, so
+            // follow up renew can work.
+            println!("Got lease {lease:?}");
+            cli.release(&lease)?;
+            return Ok(());
+        }
     }
-
-    Ok(())
 }
 
 fn enable_log() {

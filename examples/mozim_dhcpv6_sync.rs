@@ -16,6 +16,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for event in cli.poll(POLL_WAIT_TIME)? {
             if let Some(lease) = cli.process(event)? {
                 println!("Got DHCPv6 lease {:?}", lease);
+                cli.release(&lease)?;
+                return Ok(());
             }
         }
     }

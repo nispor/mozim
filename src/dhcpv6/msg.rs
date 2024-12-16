@@ -29,6 +29,8 @@ impl DhcpV6MessageType {
     pub(crate) const REPLY: Self = DhcpV6MessageType(v6::MessageType::Reply);
     pub(crate) const RENEW: Self = DhcpV6MessageType(v6::MessageType::Renew);
     pub(crate) const REBIND: Self = DhcpV6MessageType(v6::MessageType::Rebind);
+    pub(crate) const RELEASE: Self =
+        DhcpV6MessageType(v6::MessageType::Release);
 }
 
 impl Default for DhcpV6MessageType {
@@ -170,7 +172,9 @@ impl DhcpV6Message {
 
         match self.msg_type {
             DhcpV6MessageType::SOLICIT | DhcpV6MessageType::REBIND => (),
-            DhcpV6MessageType::REQUEST | DhcpV6MessageType::RENEW => {
+            DhcpV6MessageType::REQUEST
+            | DhcpV6MessageType::RENEW
+            | DhcpV6MessageType::RELEASE => {
                 if let Some(lease) = self.lease.as_ref() {
                     dhcp_msg
                         .opts_mut()
