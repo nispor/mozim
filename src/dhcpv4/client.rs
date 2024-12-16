@@ -541,6 +541,9 @@ impl DhcpV4Client {
         }
     }
 
+    /// Release the DHCPv4 lease.
+    /// To request new lease once released, please create new instance of
+    /// [DhcpV4Client].
     pub fn release(&mut self, lease: &DhcpV4Lease) -> Result<(), DhcpError> {
         let mut dhcp_msg = DhcpV4Message::new(
             &self.config,
@@ -553,13 +556,26 @@ impl DhcpV4Client {
             let raw_socket = DhcpRawSocket::new(&self.config)?;
             raw_socket.send(&dhcp_msg.to_proxy_eth_pkg_unicast()?)?;
         } else {
-            let udp_socket = DhcpUdpSocket::new(
+            // Cannot create UDP socket when interface does not have DHCP IP
+            // assigned, so we fallback to RAW socket
+            match DhcpUdpSocket::new(
                 self.config.iface_name.as_str(),
                 &lease.yiaddr,
                 &lease.siaddr,
                 self.config.socket_timeout,
-            )?;
-            udp_socket.send(&dhcp_msg.to_dhcp_pkg()?)?;
+            ) {
+                Ok(udp_socket) => {
+                    udp_socket.send(&dhcp_msg.to_dhcp_pkg()?)?;
+                }
+                Err(e) => {
+                    log::debug!(
+                        "Failed to create UDP socket to release lease {e}, \
+                        fallback to RAW socket"
+                    );
+                    let raw_socket = DhcpRawSocket::new(&self.config)?;
+                    raw_socket.send(&dhcp_msg.to_proxy_eth_pkg_unicast()?)?;
+                }
+            }
         }
         self.clean_up();
         Ok(())

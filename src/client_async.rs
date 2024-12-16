@@ -29,6 +29,13 @@ pub struct DhcpV4ClientAsync {
     share_state: Arc<Mutex<ShareState>>,
 }
 
+impl DhcpV4ClientAsync {
+    /// Release the lease acquired from DHCPv4 server.
+    pub fn release(&mut self, lease: &DhcpV4Lease) -> Result<(), DhcpError> {
+        self.client.release(lease)
+    }
+}
+
 impl Stream for DhcpV4ClientAsync {
     type Item = Result<DhcpV4Lease, DhcpError>;
 
@@ -239,5 +246,12 @@ impl std::ops::Drop for DhcpV6ClientAsync {
             // Signal `poll_thread()` to quit
             s.waker = None;
         }
+    }
+}
+
+impl DhcpV6ClientAsync {
+    /// Release the lease acquired from DHCPv6 server.
+    pub fn release(&mut self, lease: &DhcpV6Lease) -> Result<(), DhcpError> {
+        self.client.release(lease)
     }
 }

@@ -28,6 +28,7 @@ fn test_dhcpv6_async() {
             // call to use_host_name_as_client_id(), then the server should
             // return FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID.
             assert_eq!(lease.addr, FOO1_STATIC_IPV6);
+            cli.release(&lease).unwrap();
         }
     })
 }

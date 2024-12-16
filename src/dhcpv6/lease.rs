@@ -28,6 +28,7 @@ pub struct DhcpV6Lease {
     pub cli_duid: Vec<u8>,
     pub srv_duid: Vec<u8>,
     pub dhcp_opts: Vec<dhcproto::v6::DhcpOption>,
+    pub srv_ip: Ipv6Addr,
 }
 
 impl Default for DhcpV6Lease {
@@ -45,6 +46,7 @@ impl Default for DhcpV6Lease {
             cli_duid: Vec::new(),
             srv_duid: Vec::new(),
             dhcp_opts: Vec::new(),
+            srv_ip: Ipv6Addr::UNSPECIFIED,
         }
     }
 }
@@ -78,6 +80,9 @@ impl std::convert::TryFrom<&v6::Message> for DhcpV6Lease {
                     ret.t1 = v.t1;
                     ret.t2 = v.t2;
                     parse_dhcp_opt_iaadr(&v.opts, &mut ret);
+                }
+                DhcpOption::ServerUnicast(srv_ip) => {
+                    ret.srv_ip = *srv_ip;
                 }
                 DhcpOption::StatusCode(v) => {
                     if v.status != v6::Status::Success {

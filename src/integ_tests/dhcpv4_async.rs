@@ -52,6 +52,7 @@ fn test_dhcpv4_async() {
             // call to use_host_name_as_client_id(), then the server should
             // return FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID.
             assert_eq!(lease.yiaddr, FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID,);
+            cli.release(&lease).unwrap();
         }
     })
 }

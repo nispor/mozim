@@ -73,6 +73,14 @@ impl AsRawFd for DhcpV6Client {
 }
 
 impl DhcpV6Client {
+    fn clean_up(&mut self) {
+        self.lease = None;
+        self.retrans_count = 0;
+        self.phase = DhcpV6Phase::Done;
+        self.event_pool.remove_all_event();
+        self.udp_socket = None;
+    }
+
     pub fn init(
         mut config: DhcpV6Config,
         lease: Option<DhcpV6Lease>,
@@ -165,6 +173,40 @@ impl DhcpV6Client {
                 format!("Cannot process unsupported event {}", event),
             )),
         }
+    }
+
+    /// The RFC 8415:
+    ///     Implementations SHOULD retransmit one or more times but MAY choose
+    ///     to terminate the retransmission procedure early.
+    /// So here we decided not to wait reply from DHCPv6 server.
+    /// To request new release, you need to create new instance of
+    /// [DhcpV6Client].
+    pub fn release(&mut self, lease: &DhcpV6Lease) -> Result<(), DhcpError> {
+        if self.udp_socket.is_none() {
+            let socket = DhcpUdpSocket::new_v6(
+                self.config.iface_index,
+                &self.config.src_ip,
+                self.config.socket_timeout,
+            )?;
+            self.udp_socket = Some(socket);
+        }
+        let socket = self.udp_socket.as_ref().unwrap();
+
+        let mut dhcp_msg = DhcpV6Message::new(
+            &self.config,
+            DhcpV6MessageType::RELEASE,
+            self.xid,
+        );
+        dhcp_msg.load_lease(lease.clone())?;
+        let dst = if lease.srv_ip.is_unspecified() {
+            &DHCPV6_REPLAY_AND_SRVS
+        } else {
+            &lease.srv_ip
+        };
+        socket.send_to_v6(dst, &dhcp_msg.to_dhcp_pkg()?)?;
+
+        self.clean_up();
+        Ok(())
     }
 
     fn process_solicit(&mut self) -> Result<(), DhcpError> {
