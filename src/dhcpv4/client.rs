@@ -169,8 +169,15 @@ impl DhcpV4Client {
                     return Ok(None);
                 }
             };
-        self.phase = DhcpV4Phase::Request;
         socket.send(&self.gen_request_pkg(&lease).to_eth_pkg_broadcast()?)?;
+        self.lease = Some(lease);
+        self.event_pool.add_timer(
+            Duration::from_secs(gen_dhcp_request_delay(0).into()),
+            DhcpV4Event::RequestTimeout,
+        )?;
+        self.retry_count = 0;
+        self.event_pool.del_timer(DhcpV4Event::DiscoveryTimeout)?;
+        self.phase = DhcpV4Phase::Request;
         Ok(None)
     }
 
@@ -221,6 +228,7 @@ impl DhcpV4Client {
             };
         self.clean_up();
         self.lease = Some(lease.clone());
+        self.event_pool.del_timer(DhcpV4Event::RequestTimeout)?;
         self.set_renew_rebind_timer(&lease)?;
         Ok(Some(lease))
     }
