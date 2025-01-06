@@ -196,6 +196,7 @@ impl<T: DhcpEvent> DhcpEventPool<T> {
         if let Some(timer_fd) = self.timer_fds.remove(&event) {
             self.epoll.del_fd(timer_fd.as_raw_fd())?;
         }
+        log::debug!("Deleted timer {event} from event pool");
         Ok(())
     }
 
