@@ -3,7 +3,7 @@ name = "mozim"
 version = "0.2.5"
 description = "DHCP Client Library"
 license = "Apache-2.0"
-homepage = "https://github.com/nispor/mozim"
+repository = "https://github.com/nispor/mozim"
 edition = "2021"
 
 [lib]
