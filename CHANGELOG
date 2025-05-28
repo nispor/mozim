@@ -1,4 +1,17 @@
 # Changelog
+## [0.2.6] - 2025-05-28
+### Breaking changes
+ - N/A
+
+### New features
+ - Support DHCPv6. (7f1dd30)
+ - Support release DHCP lease in async API. (8f97403)
+
+### Bug fixes
+ - dhcpv4: Remove `todo!()`. (f0d93aa)
+ - dhcpv4: Replace the DiscoveryTimeout timer when discovery done. (e8dd9f7)
+ - async: Quit the thread when client drooped. (d5131ca)
+
 ## [0.2.5] - 2024-07-10
 ### Breaking changes
  - N/A
