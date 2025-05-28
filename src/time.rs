@@ -30,7 +30,7 @@ impl DhcpTimerFd {
                     ErrorKind::Bug,
                     format!("Failed to create timerfd {e}"),
                 );
-                log::error!("{}", e);
+                log::error!("{e}");
                 e
             })?;
         fd.set(
@@ -42,7 +42,7 @@ impl DhcpTimerFd {
                 ErrorKind::Bug,
                 format!("Failed to set timerfd {e}"),
             );
-            log::error!("{}", e);
+            log::error!("{e}");
             e
         })?;
         log::debug!(

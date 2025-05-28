@@ -98,7 +98,7 @@ impl std::convert::TryFrom<&v4::Message> for DhcpV4Lease {
                     ret.domain_name = Some(v.to_string());
                 }
                 v => {
-                    log::debug!("Unsupported DHCP opt {:?}", v);
+                    log::debug!("Unsupported DHCP opt {v:?}");
                 }
             }
         }

@@ -61,7 +61,7 @@ impl DhcpRawSocket {
         }
 
         set_socket_timeout(raw_fd, config.socket_timeout)?;
-        log::debug!("Raw socket created {}", raw_fd);
+        log::debug!("Raw socket created {raw_fd}");
         Ok(DhcpRawSocket {
             raw_fd,
             config: config.clone(),
@@ -79,7 +79,7 @@ impl DhcpSocket for DhcpRawSocket {
                 ErrorKind::Bug,
                 "Please run DhcpSocket::open_raw() first".to_string(),
             );
-            log::error!("{}", e);
+            log::error!("{e}");
             return Err(e);
         }
 
@@ -97,7 +97,7 @@ impl DhcpSocket for DhcpRawSocket {
         };
 
         unsafe {
-            log::debug!("Sending raw ethernet package: {:?}", eth_pkg);
+            log::debug!("Sending raw ethernet package: {eth_pkg:?}");
             let sent_bytes = libc::sendto(
                 self.raw_fd,
                 eth_pkg.as_ptr() as *mut libc::c_void,
@@ -106,7 +106,7 @@ impl DhcpSocket for DhcpRawSocket {
                 addr_ptr,
                 addr_buffer_size,
             );
-            log::debug!("Raw socket sent: {} bytes", sent_bytes);
+            log::debug!("Raw socket sent: {sent_bytes} bytes");
             if sent_bytes <= 0 {
                 let e = DhcpError::new(
                     ErrorKind::Bug,
@@ -117,7 +117,7 @@ impl DhcpSocket for DhcpRawSocket {
                         eth_pkg,
                     ),
                 );
-                log::error!("{}", e);
+                log::error!("{e}");
                 return Err(e);
             }
         }
@@ -162,7 +162,7 @@ impl DhcpSocket for DhcpRawSocket {
                         ),
                     )
                 };
-                log::error!("{}", e);
+                log::error!("{e}");
                 return Err(e);
             }
             log::debug!("Raw socket received {:?}", &buffer[..rc as usize]);
@@ -254,7 +254,7 @@ impl DhcpUdpSocket {
             src_ip,
             0 // Use random source port
         ))?;
-        log::debug!("UDP socket bind to {:?}", socket);
+        log::debug!("UDP socket bind to {socket:?}");
         bind_socket_to_iface(socket.as_raw_fd(), iface_name)?;
         socket.set_read_timeout(Some(std::time::Duration::from_secs(
             socket_timeout.into(),
@@ -278,7 +278,7 @@ impl DhcpUdpSocket {
             0,
             iface_index,
         ))?;
-        log::debug!("UDP socket bind to {:?}", socket);
+        log::debug!("UDP socket bind to {socket:?}");
         socket.set_read_timeout(Some(std::time::Duration::from_secs(
             socket_timeout.into(),
         )))?;
@@ -346,8 +346,8 @@ fn set_socket_timeout(fd: libc::c_int, timeout: u32) -> Result<(), DhcpError> {
             return Err(DhcpError::new(
                 ErrorKind::Bug,
                 format!(
-                    "Failed to set the send timeout SO_SNDTIMEO to \
-                    socket {fd}: {rc}"
+                    "Failed to set the send timeout SO_SNDTIMEO to socket \
+                     {fd}: {rc}"
                 ),
             ));
         }
@@ -362,11 +362,11 @@ fn set_socket_timeout(fd: libc::c_int, timeout: u32) -> Result<(), DhcpError> {
             let e = DhcpError::new(
                 ErrorKind::Bug,
                 format!(
-                    "Failed to set the recv timeout SO_RCVTIMEO to \
-                    socket {fd}: {rc}"
+                    "Failed to set the recv timeout SO_RCVTIMEO to socket \
+                     {fd}: {rc}"
                 ),
             );
-            log::error!("{}", e);
+            log::error!("{e}");
             return Err(e);
         }
     }
@@ -393,7 +393,7 @@ fn bind_socket_to_iface(fd: RawFd, iface_name: &str) -> Result<(), DhcpError> {
                     Errno::last(),
                 ),
             );
-            log::error!("{}", e);
+            log::error!("{e}");
             return Err(e);
         }
     }

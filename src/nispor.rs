@@ -20,7 +20,7 @@ pub(crate) fn get_nispor_iface(
                 ErrorKind::InvalidArgument,
                 "Interface name not defined".to_string(),
             );
-            log::error!("{}", e);
+            log::error!("{e}");
             return Err(e);
         }
         let mut filter = NetStateFilter::minimum();
@@ -92,8 +92,8 @@ pub(crate) fn get_ipv6_addr_of_iface(
             Err(DhcpError::new(
                 ErrorKind::InvalidArgument,
                 format!(
-                    "Failed to find unicast IPv6 address on \
-                    interface {} which is required for DHCPv6",
+                    "Failed to find unicast IPv6 address on interface {} \
+                     which is required for DHCPv6",
                     iface.name
                 ),
             ))

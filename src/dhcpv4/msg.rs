@@ -140,11 +140,11 @@ impl DhcpV4Message {
             } else {
                 let e = DhcpError::new(
                     ErrorKind::InvalidArgument,
-                    "No DHCP lease found for DHCP request, \
-                    please run DhcpV4Message::load_lease() first"
+                    "No DHCP lease found for DHCP request, please run \
+                     DhcpV4Message::load_lease() first"
                         .to_string(),
                 );
-                log::error!("{}", e);
+                log::error!("{e}");
                 return Err(e);
             }
             dhcp_msg
@@ -184,7 +184,7 @@ impl DhcpV4Message {
                 ErrorKind::InvalidArgument,
                 format!("Unsupported DHCP message type {:?}", self.msg_type),
             );
-            log::error!("{}", e);
+            log::error!("{e}");
             return Err(e);
         }
 
@@ -197,7 +197,7 @@ impl DhcpV4Message {
             ));
         }
 
-        log::debug!("DHCP message {:?}", dhcp_msg);
+        log::debug!("DHCP message {dhcp_msg:?}");
 
         let mut dhcp_msg_buff = Vec::new();
         let mut e = v4::Encoder::new(&mut dhcp_msg_buff);
@@ -212,10 +212,10 @@ impl DhcpV4Message {
                     ErrorKind::InvalidDhcpServerReply,
                     format!(
                         "Failed to parse DHCP message from payload of pkg \
-                        {payload:?}: {decode_error}"
+                         {payload:?}: {decode_error}"
                     ),
                 );
-                log::error!("{}", e);
+                log::error!("{e}");
                 e
             })?;
 
@@ -228,7 +228,7 @@ impl DhcpV4Message {
                 DhcpV4MessageType::Ack
             }
             Some(t) => {
-                log::debug!("Unknown dhcp message type {:?}", t);
+                log::debug!("Unknown dhcp message type {t:?}");
                 DhcpV4MessageType::Unknown
             }
             None => {
@@ -242,7 +242,7 @@ impl DhcpV4Message {
             xid: v4_dhcp_msg.xid(),
             ..Default::default()
         };
-        log::debug!("Got reply DHCP message {:?}", ret);
+        log::debug!("Got reply DHCP message {ret:?}");
         Ok(ret)
     }
 
@@ -287,10 +287,11 @@ impl DhcpV4Message {
                 let e = DhcpError::new(
                     ErrorKind::InvalidDhcpServerReply,
                     format!(
-                        "Failed to parse ethernet package to Dhcpv4Offer: {error}"
+                        "Failed to parse ethernet package to Dhcpv4Offer: \
+                         {error}"
                     ),
                 );
-                log::error!("{}", e);
+                log::error!("{e}");
                 return Err(e);
             }
             Ok(v) => v,

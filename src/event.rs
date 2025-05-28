@@ -68,7 +68,7 @@ impl DhcpEpoll {
                     self.fd.0.as_raw_fd()
                 ),
             );
-            log::error!("{}", e);
+            log::error!("{e}");
             e
         })
     }
@@ -89,7 +89,7 @@ impl DhcpEpoll {
                     self.fd.0.as_raw_fd(),
                 ),
             );
-            log::error!("{}", e);
+            log::error!("{e}");
             e
         })
     }
@@ -164,7 +164,7 @@ impl<T: DhcpEvent> DhcpEventPool<T> {
         fd: RawFd,
         event: T,
     ) -> Result<(), DhcpError> {
-        log::debug!("Adding socket {} with event {} to event pool", fd, event);
+        log::debug!("Adding socket {fd} with event {event} to event pool");
         self.socket_fds.insert(event, fd);
         self.epoll.add_fd(fd, event)
     }

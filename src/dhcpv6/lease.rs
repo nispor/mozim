@@ -90,7 +90,7 @@ impl std::convert::TryFrom<&v6::Message> for DhcpV6Lease {
                             ErrorKind::NoLease,
                             format!(
                                 "DHCP server reply status code {}({:?}), \
-                                message {}",
+                                 message {}",
                                 u16::from(v.status),
                                 v.status,
                                 v.msg
@@ -99,7 +99,7 @@ impl std::convert::TryFrom<&v6::Message> for DhcpV6Lease {
                     }
                 }
                 v => {
-                    log::debug!("Unsupported DHCPv6 opt {:?}", v);
+                    log::debug!("Unsupported DHCPv6 opt {v:?}");
                 }
             }
         }

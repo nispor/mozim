@@ -45,7 +45,7 @@ impl TryFrom<u64> for DhcpV4Event {
                     ErrorKind::Bug,
                     format!("Got unexpected event ID {v}"),
                 );
-                log::error!("{}", e);
+                log::error!("{e}");
                 Err(e)
             }
         }
