@@ -37,8 +37,8 @@ fn remove_test_net_namespace() {
 
 fn create_test_veth_nics() {
     run_cmd(&format!(
-        "ip link add {TEST_NIC_CLI} \
-        address {TEST_NIC_CLI_MAC} type veth peer name {TEST_NIC_SRV}"
+        "ip link add {TEST_NIC_CLI} address {TEST_NIC_CLI_MAC} type veth peer \
+         name {TEST_NIC_SRV}"
     ));
     run_cmd(&format!("ip link set {TEST_NIC_CLI} up"));
     run_cmd(&format!(
@@ -48,12 +48,12 @@ fn create_test_veth_nics() {
         "ip netns exec {TEST_DHCPD_NETNS} ip link set {TEST_NIC_SRV} up",
     ));
     run_cmd(&format!(
-        "ip netns exec {TEST_DHCPD_NETNS} \
-        ip addr add {TEST_DHCP_SRV_IP}/24 dev {TEST_NIC_SRV}",
+        "ip netns exec {TEST_DHCPD_NETNS} ip addr add {TEST_DHCP_SRV_IP}/24 \
+         dev {TEST_NIC_SRV}",
     ));
     run_cmd(&format!(
-        "ip netns exec {TEST_DHCPD_NETNS} \
-        ip addr add {TEST_DHCP_SRV_IPV6}/64 dev {TEST_NIC_SRV}",
+        "ip netns exec {TEST_DHCPD_NETNS} ip addr add {TEST_DHCP_SRV_IPV6}/64 \
+         dev {TEST_NIC_SRV}",
     ));
     // Need to wait 2 seconds for IPv6 duplicate address detection
     std::thread::sleep(std::time::Duration::from_secs(2));

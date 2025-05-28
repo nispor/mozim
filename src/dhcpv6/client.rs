@@ -133,7 +133,7 @@ impl DhcpV6Client {
         &mut self,
         event: DhcpV6Event,
     ) -> Result<Option<DhcpV6Lease>, DhcpError> {
-        log::debug!("Processing event {:?}", event);
+        log::debug!("Processing event {event:?}");
         match event {
             DhcpV6Event::TransmitWait => {
                 self.process_transmit()?;
@@ -150,8 +150,7 @@ impl DhcpV6Client {
                 _ => Err(DhcpError::new(
                     ErrorKind::Bug,
                     format!(
-                        "Cannot process unsupported phase {} in \
-                        UdpPackageIn",
+                        "Cannot process unsupported phase {} in UdpPackageIn",
                         self.phase
                     ),
                 )),
@@ -170,7 +169,7 @@ impl DhcpV6Client {
             }
             _ => Err(DhcpError::new(
                 ErrorKind::Bug,
-                format!("Cannot process unsupported event {}", event),
+                format!("Cannot process unsupported event {event}"),
             )),
         }
     }
@@ -230,7 +229,7 @@ impl DhcpV6Client {
             None => {
                 return Err(DhcpError::new(
                     ErrorKind::Bug,
-                    format!("Got NULL socket for process_solicit {:?}", self),
+                    format!("Got NULL socket for process_solicit {self:?}"),
                 ));
             }
         };
@@ -271,7 +270,7 @@ impl DhcpV6Client {
             None => {
                 return Err(DhcpError::new(
                     ErrorKind::Bug,
-                    format!("Got NULL socket for process_solicit {:?}", self),
+                    format!("Got NULL socket for process_solicit {self:?}"),
                 ));
             }
         };
@@ -322,8 +321,7 @@ impl DhcpV6Client {
                 return Err(DhcpError::new(
                     ErrorKind::Bug,
                     format!(
-                        "Got NULL DHCP package for process_transmit {:?}",
-                        self
+                        "Got NULL DHCP package for process_transmit {self:?}"
                     ),
                 ));
             }
@@ -376,8 +374,7 @@ impl DhcpV6Client {
                         ErrorKind::Bug,
                         format!(
                             "Got NULL lease for DhcpV6Phase::Rebind in \
-                            schedule_next_retransmit(): {:?}",
-                            self
+                             schedule_next_retransmit(): {self:?}"
                         ),
                     ));
                 }
@@ -395,8 +392,7 @@ impl DhcpV6Client {
                         ErrorKind::Bug,
                         format!(
                             "Got NULL lease for DhcpV6Phase::Rebind in \
-                            schedule_next_retransmit(): {:?}",
-                            self
+                             schedule_next_retransmit(): {self:?}"
                         ),
                     ));
                 }
@@ -406,7 +402,7 @@ impl DhcpV6Client {
                     ErrorKind::Bug,
                     format!(
                         "Got invalid phase {:?} for \
-                        `schedule_next_retransmit()`: {:?}",
+                         `schedule_next_retransmit()`: {:?}",
                         self.phase, self
                     ),
                 ));
@@ -437,8 +433,7 @@ impl DhcpV6Client {
             Err(DhcpError::new(
                 ErrorKind::Bug,
                 format!(
-                    "Got NULL lease for `schedule_renew_rebind()`: {:?}",
-                    self
+                    "Got NULL lease for `schedule_renew_rebind()`: {self:?}"
                 ),
             ))
         }
@@ -466,7 +461,7 @@ impl DhcpV6Client {
         } else {
             Err(DhcpError::new(
                 ErrorKind::Bug,
-                format!("Got NULL lease for `process_renew()`: {:?}", self),
+                format!("Got NULL lease for `process_renew()`: {self:?}"),
             ))
         }
     }
@@ -493,7 +488,7 @@ impl DhcpV6Client {
         } else {
             Err(DhcpError::new(
                 ErrorKind::Bug,
-                format!("Got NULL lease for `process_renew()`: {:?}", self),
+                format!("Got NULL lease for `process_renew()`: {self:?}"),
             ))
         }
     }
@@ -508,8 +503,8 @@ fn recv_dhcp_msg(
     let reply_dhcp_msg = DhcpV6Message::from_dhcp_pkg(&buffer)?;
     if reply_dhcp_msg.xid != xid {
         log::debug!(
-            "Dropping DHCP message due to xid miss-match. \
-            Expecting {:?}, got {:?}",
+            "Dropping DHCP message due to xid miss-match. Expecting {:?}, got \
+             {:?}",
             xid,
             reply_dhcp_msg.xid
         );
@@ -528,8 +523,7 @@ fn recv_dhcp_msg(
         Ok(Some(lease))
     } else {
         log::debug!(
-            "No lease found in the reply from DHCP server {:?}",
-            reply_dhcp_msg
+            "No lease found in the reply from DHCP server {reply_dhcp_msg:?}"
         );
         Ok(None)
     }

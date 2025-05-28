@@ -183,7 +183,7 @@ impl DhcpV6Message {
                     return Err(DhcpError::new(
                         ErrorKind::InvalidArgument,
                         "No DHCP lease found for DHCP request, please run \
-                        DhcpV6Message::load_lease() first"
+                         DhcpV6Message::load_lease() first"
                             .to_string(),
                     ));
                 }
@@ -202,7 +202,7 @@ impl DhcpV6Message {
                 .insert(DhcpOption::ElapsedTime(self.elapsed_time));
         }
 
-        log::debug!("DHCP message {:?}", dhcp_msg);
+        log::debug!("DHCP message {dhcp_msg:?}");
 
         let mut dhcp_msg_buff = Vec::new();
         let mut e = v6::Encoder::new(&mut dhcp_msg_buff);
@@ -217,10 +217,10 @@ impl DhcpV6Message {
                     ErrorKind::InvalidDhcpServerReply,
                     format!(
                         "Failed to parse DHCPv6 message from payload of pkg \
-                        {payload:?}: {decode_error}"
+                         {payload:?}: {decode_error}"
                     ),
                 );
-                log::error!("{}", e);
+                log::error!("{e}");
                 e
             })?;
 
@@ -230,7 +230,7 @@ impl DhcpV6Message {
             xid: v6_dhcp_msg.xid(),
             ..Default::default()
         };
-        log::debug!("Got reply DHCP message {:?}", ret);
+        log::debug!("Got reply DHCP message {ret:?}");
         Ok(ret)
     }
 
@@ -252,7 +252,7 @@ fn validate_lease(
             ErrorKind::InvalidArgument,
             format!(
                 "DHCPv6 lease contains different IA type({}) with config({}) \
-                DhcpV6Message::load_lease() with correct lease",
+                 DhcpV6Message::load_lease() with correct lease",
                 lease.ia_type, config.ia_type
             ),
         ));
@@ -261,15 +261,15 @@ fn validate_lease(
         return Err(DhcpError::new(
             ErrorKind::InvalidArgument,
             "DHCPv6 lease contains empty server DUID, please run \
-            DhcpV6Message::load_lease() with correct lease"
+             DhcpV6Message::load_lease() with correct lease"
                 .to_string(),
         ));
     }
     if lease.addr == Ipv6Addr::UNSPECIFIED {
         return Err(DhcpError::new(
             ErrorKind::InvalidArgument,
-            "DHCPv6 lease contains invalid all zero lease \
-            IPv6 address, please run DhcpV6Message::load_lease()
+            "DHCPv6 lease contains invalid all zero lease IPv6 address, \
+             please run DhcpV6Message::load_lease()
             with correct lease"
                 .to_string(),
         ));

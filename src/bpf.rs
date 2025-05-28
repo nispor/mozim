@@ -74,11 +74,7 @@ pub(crate) fn apply_dhcp_bpf(fd: libc::c_int) -> Result<(), DhcpError> {
         raw_filters[i].jf = *jf;
         raw_filters[i].k = *k;
         log::debug!(
-            "Registering BPF filter {:#04x}, {}, {}, {:#010x}",
-            code,
-            jt,
-            jf,
-            k
+            "Registering BPF filter {code:#04x}, {jt}, {jf}, {k:#010x}"
         );
     }
     let bpf_filter = libc::sock_fprog {
@@ -103,7 +99,7 @@ pub(crate) fn apply_dhcp_bpf(fd: libc::c_int) -> Result<(), DhcpError> {
                 nix::errno::Errno::last()
             ),
         );
-        log::error!("{}", e);
+        log::error!("{e}");
         Err(e)
     } else {
         Ok(())

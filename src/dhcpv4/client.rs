@@ -157,7 +157,7 @@ impl DhcpV4Client {
                 ErrorKind::Bug,
                 "process_discovery(): No Raw socket".to_string(),
             );
-            log::error!("{}", e);
+            log::error!("{e}");
             return Err(e);
         };
         let lease =
@@ -214,7 +214,7 @@ impl DhcpV4Client {
                 ErrorKind::Bug,
                 "process_request(): No Raw socket".to_string(),
             );
-            log::error!("{}", e);
+            log::error!("{e}");
             return Err(e);
         };
         let lease =
@@ -256,7 +256,7 @@ impl DhcpV4Client {
                 self.clean_up();
                 let e =
                     DhcpError::new(ErrorKind::Bug, "No RAW socket".to_string());
-                log::error!("{}", e);
+                log::error!("{e}");
                 Err(e)
             }
         } else {
@@ -279,13 +279,13 @@ impl DhcpV4Client {
                         ErrorKind::Bug,
                         "No lease in request timeout process".to_string(),
                     );
-                    log::error!("{}", e);
+                    log::error!("{e}");
                     Err(e)
                 }
             } else {
                 let e =
                     DhcpError::new(ErrorKind::Bug, "No RAW socket".to_string());
-                log::error!("{}", e);
+                log::error!("{e}");
                 Err(e)
             }
         }
@@ -309,7 +309,7 @@ impl DhcpV4Client {
         } else {
             self.clean_up();
             let e = DhcpError::new(ErrorKind::Bug, "No RAW socket".to_string());
-            log::error!("{}", e);
+            log::error!("{e}");
             Err(e)
         }
     }
@@ -317,7 +317,7 @@ impl DhcpV4Client {
     fn process_timeout(&mut self) -> Result<Option<DhcpV4Lease>, DhcpError> {
         self.clean_up();
         let e = DhcpError::new(ErrorKind::Timeout, "Timeout".to_string());
-        log::error!("{}", e);
+        log::error!("{e}");
         Err(e)
     }
 
@@ -349,7 +349,7 @@ impl DhcpV4Client {
                 ErrorKind::Bug,
                 "process_renew(): No lease".to_string(),
             );
-            log::error!("{}", e);
+            log::error!("{e}");
             return Err(e);
         };
         let udp_socket = DhcpUdpSocket::new(
@@ -384,7 +384,7 @@ impl DhcpV4Client {
                 ErrorKind::Bug,
                 "process_renew_recv(): No UDP socket".to_string(),
             );
-            log::error!("{}", e);
+            log::error!("{e}");
             return Err(e);
         };
         match recv_dhcp_msg(socket, DhcpV4MessageType::Ack, self.xid) {
@@ -397,9 +397,9 @@ impl DhcpV4Client {
             Ok(None) => Ok(None),
             Err(e) => {
                 if self.retry_count == 0 {
-                    log::warn!("DHCP renew failed: {}, will try", e);
+                    log::warn!("DHCP renew failed: {e}, will try");
                 } else {
-                    log::warn!("DHCP renew failed twice: {}, will rebind", e);
+                    log::warn!("DHCP renew failed twice: {e}, will rebind");
                 }
                 Ok(None)
             }
@@ -424,7 +424,7 @@ impl DhcpV4Client {
                 ErrorKind::Bug,
                 "process_rebind(): no lease".to_string(),
             );
-            log::error!("{}", e);
+            log::error!("{e}");
             return Err(e);
         };
         let raw_socket = DhcpRawSocket::new(&self.config)?;
@@ -455,7 +455,7 @@ impl DhcpV4Client {
                 ErrorKind::Bug,
                 "process_rebind_recv(): No RAW socket".to_string(),
             );
-            log::error!("{}", e);
+            log::error!("{e}");
             return Err(e);
         };
         match recv_dhcp_msg(socket, DhcpV4MessageType::Ack, self.xid) {
@@ -468,11 +468,10 @@ impl DhcpV4Client {
             Ok(None) => Ok(None),
             Err(e) => {
                 if self.retry_count == 0 {
-                    log::warn!("DHCP rebind failed: {}, will try", e);
+                    log::warn!("DHCP rebind failed: {e}, will try");
                 } else {
                     log::warn!(
-                        "DHCP rebind failed twice: {}, will request new lease",
-                        e
+                        "DHCP rebind failed twice: {e}, will request new lease"
                     );
                 }
                 Ok(None)
@@ -512,7 +511,7 @@ impl DhcpV4Client {
         &mut self,
         event: DhcpV4Event,
     ) -> Result<Option<DhcpV4Lease>, DhcpError> {
-        log::debug!("Processing event {:?}", event);
+        log::debug!("Processing event {event:?}");
         match event {
             DhcpV4Event::RawPackageIn => match self.phase {
                 DhcpV4Phase::Discovery => self.process_discovery(),
@@ -520,8 +519,8 @@ impl DhcpV4Client {
                 DhcpV4Phase::Rebind => self.process_rebind_recv(),
                 _ => {
                     log::error!(
-                        "BUG: Got in-coming packet on raw socket \
-                        with unexpected phase {}",
+                        "BUG: Got in-coming packet on raw socket with \
+                         unexpected phase {}",
                         self.phase
                     );
                     Ok(None)
@@ -531,8 +530,8 @@ impl DhcpV4Client {
                 DhcpV4Phase::Renew => self.process_renew_recv(),
                 _ => {
                     log::error!(
-                        "BUG: Got in-coming packet on UDP socket \
-                        with unexpected phase {}",
+                        "BUG: Got in-coming packet on UDP socket with \
+                         unexpected phase {}",
                         self.phase
                     );
                     Ok(None)
@@ -578,7 +577,7 @@ impl DhcpV4Client {
                 Err(e) => {
                     log::debug!(
                         "Failed to create UDP socket to release lease {e}, \
-                        fallback to RAW socket"
+                         fallback to RAW socket"
                     );
                     let raw_socket = DhcpRawSocket::new(&self.config)?;
                     raw_socket.send(&dhcp_msg.to_proxy_eth_pkg_unicast()?)?;
@@ -603,8 +602,7 @@ fn recv_dhcp_msg(
     };
     if reply_dhcp_msg.xid != xid {
         log::debug!(
-            "Dropping DHCP message due to xid miss-match. \
-            Expecting {}, got {}",
+            "Dropping DHCP message due to xid miss-match. Expecting {}, got {}",
             xid,
             reply_dhcp_msg.xid
         );
@@ -623,8 +621,7 @@ fn recv_dhcp_msg(
         Ok(Some(lease))
     } else {
         log::debug!(
-            "No lease found in the reply from DHCP server {:?}",
-            reply_dhcp_msg
+            "No lease found in the reply from DHCP server {reply_dhcp_msg:?}"
         );
         Ok(None)
     }

@@ -1,4 +1,5 @@
 max_width = 80
 reorder_imports = true
 edition = "2021"
+format_strings = true
 wrap_comments = true

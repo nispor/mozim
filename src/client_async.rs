@@ -70,8 +70,8 @@ impl Stream for DhcpV4ClientAsync {
                 return Poll::Ready(Some(Err(DhcpError::new(
                     ErrorKind::Bug,
                     format!(
-                        "BUG: DhcpV4ClientAsync::poll_next() \
-                        Failed to acquire lock on share_state {e}",
+                        "BUG: DhcpV4ClientAsync::poll_next() Failed to \
+                         acquire lock on share_state {e}",
                     ),
                 ))));
             }
@@ -207,8 +207,8 @@ impl Stream for DhcpV6ClientAsync {
                 return Poll::Ready(Some(Err(DhcpError::new(
                     ErrorKind::Bug,
                     format!(
-                        "BUG: DhcpV6ClientAsync::poll_next() \
-                        Failed to acquire lock on share_state {e}",
+                        "BUG: DhcpV6ClientAsync::poll_next() Failed to \
+                         acquire lock on share_state {e}",
                     ),
                 ))));
             }
