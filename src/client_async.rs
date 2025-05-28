@@ -128,6 +128,8 @@ fn poll_thread(fd: RawFd, share_state: Arc<Mutex<ShareState>>) {
             std::thread::sleep(std::time::Duration::from_millis(
                 POLL_TIMEOUT as u64,
             ));
+            // Waker is None means DHCP client quit.
+            return;
         } else {
             match nix::poll::poll(&mut poll_fds, POLL_TIMEOUT) {
                 // Timeout, let's check whether waker is None(DHCP client quit);
