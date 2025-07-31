@@ -107,15 +107,9 @@ impl DhcpV4Message {
                 .insert(v4::DhcpOption::MessageType(v4::MessageType::Discover));
             dhcp_msg
                 .opts_mut()
-                .insert(v4::DhcpOption::ParameterRequestList(vec![
-                    v4::OptionCode::Hostname,
-                    v4::OptionCode::SubnetMask,
-                    v4::OptionCode::Router,
-                    v4::OptionCode::DomainNameServer,
-                    v4::OptionCode::DomainName,
-                    v4::OptionCode::InterfaceMtu,
-                    v4::OptionCode::NtpServers,
-                ]));
+                .insert(v4::DhcpOption::ParameterRequestList(
+                    self.config.request_opts.clone(),
+                ));
         } else if self.msg_type == DhcpV4MessageType::Request {
             dhcp_msg
                 .opts_mut()
@@ -149,15 +143,9 @@ impl DhcpV4Message {
             }
             dhcp_msg
                 .opts_mut()
-                .insert(v4::DhcpOption::ParameterRequestList(vec![
-                    v4::OptionCode::Hostname,
-                    v4::OptionCode::SubnetMask,
-                    v4::OptionCode::Router,
-                    v4::OptionCode::DomainNameServer,
-                    v4::OptionCode::DomainName,
-                    v4::OptionCode::InterfaceMtu,
-                    v4::OptionCode::NtpServers,
-                ]));
+                .insert(v4::DhcpOption::ParameterRequestList(
+                    self.config.request_opts.clone(),
+                ));
         } else if self.msg_type == DhcpV4MessageType::Release {
             if let Some(lease) = self.lease.as_ref() {
                 dhcp_msg.set_ciaddr(lease.yiaddr);

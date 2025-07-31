@@ -2,11 +2,13 @@
 
 use futures::StreamExt;
 
-use crate::{DhcpV4ClientAsync, DhcpV4Config, DhcpV4Lease};
+use crate::{
+    DhcpV4ClasslessRoute, DhcpV4ClientAsync, DhcpV4Config, DhcpV4Lease,
+};
 
 use super::env::{
     with_dhcp_env, FOO1_HOSTNAME, FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID,
-    TEST_NIC_CLI,
+    TEST_CLS_DST, TEST_CLS_DST_LEN, TEST_CLS_RT_ADDR, TEST_NIC_CLI,
 };
 
 const FOO2_HOSTNAME: &str = "foo2";
@@ -52,6 +54,21 @@ fn test_dhcpv4_async() {
             // call to use_host_name_as_client_id(), then the server should
             // return FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID.
             assert_eq!(lease.yiaddr, FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID,);
+
+            assert_eq!(
+                lease.classless_routes.as_deref().unwrap(),
+                &[DhcpV4ClasslessRoute {
+                    destination: TEST_CLS_DST,
+                    prefix_length: TEST_CLS_DST_LEN,
+                    router: TEST_CLS_RT_ADDR,
+                }]
+            );
+
+            assert_eq!(
+                lease.get_option_raw(249).unwrap(),
+                &[249, 8, 24, 203, 0, 113, 192, 0, 2, 40]
+            );
+
             cli.release(&lease).unwrap();
         }
     })

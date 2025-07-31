@@ -15,6 +15,9 @@ const TEST_NIC_SRV: &str = "dhcpsrv";
 
 const TEST_DHCP_SRV_IP: &str = "192.0.2.1";
 const TEST_DHCP_SRV_IPV6: &str = "2001:db8:a::1";
+pub(crate) const TEST_CLS_DST: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 0);
+pub(crate) const TEST_CLS_DST_LEN: u8 = 24;
+pub(crate) const TEST_CLS_RT_ADDR: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 40);
 
 pub(crate) const FOO1_HOSTNAME: &str = "foo1";
 pub(crate) const FOO1_CLIENT_ID: &str =
@@ -86,6 +89,8 @@ fn start_dhcp_server() {
         --dhcp-option=option:mtu,1492
         --dhcp-option=option:domain-name,example.com
         --dhcp-option=option:ntp-server,192.0.2.1
+        --dhcp-option=121,{TEST_CLS_DST}/{TEST_CLS_DST_LEN},{TEST_CLS_RT_ADDR}
+        --dhcp-option=249,{TEST_CLS_DST}/{TEST_CLS_DST_LEN},{TEST_CLS_RT_ADDR}
         --bind-interfaces
         --except-interface=lo
         --clear-on-reload
