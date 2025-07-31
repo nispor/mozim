@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use dhcproto::v4::OptionCode;
+
+use super::option::V4_OPT_CODE_MS_CLASSLESS_STATIC_ROUTE;
 use crate::{
     mac::mac_str_to_u8_array, nispor::get_nispor_iface,
     socket::DEFAULT_SOCKET_TIMEOUT, DhcpError,
@@ -21,6 +24,7 @@ pub struct DhcpV4Config {
     pub(crate) timeout: u32,
     pub(crate) socket_timeout: u32,
     pub(crate) is_proxy: bool,
+    pub(crate) request_opts: Vec<OptionCode>,
 }
 
 impl Default for DhcpV4Config {
@@ -34,6 +38,17 @@ impl Default for DhcpV4Config {
             timeout: DEFAULT_TIMEOUT,
             socket_timeout: DEFAULT_SOCKET_TIMEOUT,
             is_proxy: false,
+            request_opts: vec![
+                OptionCode::Hostname,
+                OptionCode::SubnetMask,
+                OptionCode::Router,
+                OptionCode::DomainNameServer,
+                OptionCode::DomainName,
+                OptionCode::InterfaceMtu,
+                OptionCode::NtpServers,
+                OptionCode::ClasslessStaticRoute,
+                OptionCode::Unknown(V4_OPT_CODE_MS_CLASSLESS_STATIC_ROUTE),
+            ],
         }
     }
 }
@@ -103,6 +118,35 @@ impl DhcpV4Config {
         // RFC 2132: 9.14. Client-identifier
         self.client_id = vec![client_id_type];
         self.client_id.extend_from_slice(client_id);
+        self
+    }
+
+    /// By default, these DHCP options will be requested from DHCP server:
+    /// * Hostname (12)
+    /// * Subnet Mask (1)
+    /// * Router (3)
+    /// * Domain Name Server (6)
+    /// * Domain Name (15)
+    /// * Interface MTU (26)
+    /// * NTP Servers (42)
+    /// * Classless Static Route (121)
+    /// * Microsoft Classless Static Route (249)
+    ///
+    /// This function will append specified DHCP option to above list.
+    pub fn request_extra_dhcp_opts(&mut self, opts: &[u8]) -> &mut Self {
+        for opt in opts {
+            self.request_opts.push((*opt).into());
+        }
+        self.request_opts.sort_unstable();
+        self.request_opts.dedup();
+        self
+    }
+
+    /// Specify arbitrary DHCP options to request.
+    pub fn override_request_dhcp_opts(&mut self, opts: &[u8]) -> &mut Self {
+        self.request_opts = opts.iter().map(|c| OptionCode::from(*c)).collect();
+        self.request_opts.sort_unstable();
+        self.request_opts.dedup();
         self
     }
 }

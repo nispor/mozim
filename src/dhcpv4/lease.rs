@@ -2,11 +2,13 @@
 
 use std::net::Ipv4Addr;
 
-use dhcproto::{v4, v4::DhcpOption};
+use dhcproto::{v4, v4::DhcpOption, Encodable};
 
-use crate::DhcpError;
+use super::option::{DhcpV4Options, V4_OPT_CODE_MS_CLASSLESS_STATIC_ROUTE};
+use crate::{DhcpError, DhcpV4ClasslessRoute};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[non_exhaustive]
 pub struct DhcpV4Lease {
     // Required for sending DHCPRELEASE in proxy mode
     pub(crate) srv_mac: [u8; 6],
@@ -24,8 +26,8 @@ pub struct DhcpV4Lease {
     pub mtu: Option<u16>,
     pub host_name: Option<String>,
     pub domain_name: Option<String>,
-    // TODO: We should save the unsupported DHCP options for external parser.
-    //pub other_dhcp_opts: Vec<DhcpV4UnknownOption>,
+    pub classless_routes: Option<Vec<DhcpV4ClasslessRoute>>,
+    dhcp_opts: DhcpV4Options,
 }
 
 impl Default for DhcpV4Lease {
@@ -46,6 +48,8 @@ impl Default for DhcpV4Lease {
             mtu: None,
             host_name: None,
             domain_name: None,
+            classless_routes: None,
+            dhcp_opts: DhcpV4Options::default(),
         }
     }
 }
@@ -56,9 +60,10 @@ impl std::convert::TryFrom<&v4::Message> for DhcpV4Lease {
         let mut ret = Self {
             siaddr: v4_dhcp_msg.siaddr(),
             yiaddr: v4_dhcp_msg.yiaddr(),
+            dhcp_opts: DhcpV4Options::new(v4_dhcp_msg.opts().iter()),
             ..Default::default()
         };
-        for (_, dhcp_opt) in v4_dhcp_msg.opts().iter() {
+        for (code, dhcp_opt) in v4_dhcp_msg.opts().iter() {
             match dhcp_opt {
                 DhcpOption::MessageType(_) => (),
                 DhcpOption::Renewal(v) => {
@@ -97,12 +102,37 @@ impl std::convert::TryFrom<&v4::Message> for DhcpV4Lease {
                 DhcpOption::DomainName(v) => {
                     ret.domain_name = Some(v.to_string());
                 }
-                v => {
-                    log::debug!("Unsupported DHCP opt {v:?}");
+                DhcpOption::ClasslessStaticRoute(v) => {
+                    ret.classless_routes = Some(DhcpV4ClasslessRoute::parse(v));
                 }
+                DhcpOption::Unknown(v) => {
+                    if *code
+                        == v4::OptionCode::Unknown(
+                            V4_OPT_CODE_MS_CLASSLESS_STATIC_ROUTE,
+                        )
+                        && ret.classless_routes.is_none()
+                    {
+                        if let Some(routes) = v
+                            .to_vec()
+                            .ok()
+                            .and_then(DhcpV4ClasslessRoute::parse_raw)
+                        {
+                            ret.classless_routes = Some(routes);
+                        }
+                    }
+                }
+                _ => (),
             }
         }
         // TODO: Validate T1 < T2 < lease_time.
         Ok(ret)
+    }
+}
+
+impl DhcpV4Lease {
+    /// Return the raw data of specified DHCP option containing
+    /// leading code and length(if available) also.
+    pub fn get_option_raw(&self, code: u8) -> Option<&[u8]> {
+        self.dhcp_opts.get_data_raw(code)
     }
 }
