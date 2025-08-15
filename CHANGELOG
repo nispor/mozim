@@ -1,4 +1,14 @@
 # Changelog
+## [0.2.7] - 2025-08-15
+### Breaking changes
+ - N/A
+
+### New features
+ - DHCPv4: Support classless route. (28e050c)
+
+### Bug fixes
+ - N/A
+
 ## [0.2.6] - 2025-05-28
 ### Breaking changes
  - N/A
