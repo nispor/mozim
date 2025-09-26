@@ -1,3 +1,6 @@
+This file contains notes that cannot be stored in source code but developer
+should know.
+
 ## RFC 8415
 
 Clients and servers exchange DHCP messages using UDP (see [RFC768]
@@ -94,72 +97,9 @@ restarts of the DHCP client.
                   Figure 2: Client/Server Message Format
 
 
-16.2.  Solicit Message
-
-   Clients MUST discard any received Solicit messages.
-
-   Servers MUST discard any Solicit messages that do not include a
-   Client Identifier option or that do include a Server Identifier
-   option.
-
-16.3.  Advertise Message
-
-   Clients MUST discard any received Advertise message that meets any of
-   the following conditions:
-
-   -  the message does not include a Server Identifier option (see
-      Section 21.3).
-
-   -  the message does not include a Client Identifier option (see
-      Section 21.2).
-
-   -  the contents of the Client Identifier option do not match the
-      client's DUID.
-
-   -  the "transaction-id" field value does not match the value the
-      client used in its Solicit message.
-
-   Servers and relay agents MUST discard any received Advertise
-   messages.
+### RFC 8415: 16. Message Validation
 
 
-16.4.  Request Message
-
-   Clients MUST discard any received Request messages.
-
-   Servers MUST discard any received Request message that meets any of
-   the following conditions:
-
-   -  the message does not include a Server Identifier option (see
-      Section 21.3).
-
-   -  the contents of the Server Identifier option do not match the
-      server's DUID.
-
-   -  the message does not include a Client Identifier option (see
-      Section 21.2).
-
-
-16.6.  Renew Message
-
-   Clients MUST discard any received Renew messages.
-
-   Servers MUST discard any received Renew message that meets any of the
-   following conditions:
-
-   -  the message does not include a Server Identifier option (see
-      Section 21.3).
-
-   -  the contents of the Server Identifier option do not match the
-      server's identifier.
-
-   -  the message does not include a Client Identifier option (see
-      Section 21.2).
-
-16.7.  Rebind Message
-
-   Clients MUST discard any received Rebind messages.
-
-   Servers MUST discard any received Rebind messages that do not include
-   a Client Identifier option (see Section 21.2) or that do include a
-   Server Identifier option (see Section 21.3).
+A server MUST discard any Solicit, Confirm, Rebind, or
+Information-request messages it receives with a Layer 3 unicast
+destination address.

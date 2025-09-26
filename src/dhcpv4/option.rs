@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
-use std::net::Ipv4Addr;
+use std::{collections::HashMap, net::Ipv4Addr};
 
 use dhcproto::{
     v4::{DhcpOption, OptionCode},

@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::net::Ipv6Addr;
-use std::time::Instant;
+use std::{net::Ipv6Addr, time::Instant};
 
 use dhcproto::{
     v6,
-    v6::{DhcpOption, DhcpOptions},
+    v6::{DhcpOption, DhcpOptions, OptionCode},
     Decodable, Decoder, Encodable,
 };
 
-use crate::{DhcpError, DhcpV6Config, DhcpV6IaType, DhcpV6Lease, ErrorKind};
+use crate::{
+    DhcpError, DhcpV6Duid, DhcpV6IaType, DhcpV6Lease, DhcpV6Mode, ErrorKind,
+};
 
 const DEFAULT_IAID: u32 = 0;
 
@@ -80,20 +81,23 @@ impl From<v6::MessageType> for DhcpV6MessageType {
 pub struct DhcpV6Message {
     pub(crate) msg_type: DhcpV6MessageType,
     pub(crate) lease: Option<DhcpV6Lease>,
-    pub(crate) config: DhcpV6Config,
+    pub(crate) mode: DhcpV6Mode,
+    pub(crate) duid: DhcpV6Duid,
     pub(crate) xid: [u8; 3],
     elapsed_time: u16,
 }
 
 impl DhcpV6Message {
     pub(crate) fn new(
-        config: &DhcpV6Config,
+        mode: DhcpV6Mode,
+        duid: DhcpV6Duid,
         msg_type: DhcpV6MessageType,
         xid: [u8; 3],
     ) -> Self {
         Self {
             msg_type,
-            config: config.clone(),
+            mode,
+            duid,
             lease: None,
             xid,
             elapsed_time: 0,
@@ -104,21 +108,21 @@ impl DhcpV6Message {
         &mut self,
         lease: DhcpV6Lease,
     ) -> Result<(), DhcpError> {
-        validate_lease(&self.config, &lease)?;
+        validate_lease(self.mode, &lease)?;
         self.lease = Some(lease);
         Ok(())
     }
 
-    pub(crate) fn to_dhcp_pkg(&self) -> Result<Vec<u8>, DhcpError> {
+    pub(crate) fn to_dhcp_packet(&self) -> Result<Vec<u8>, DhcpError> {
         let mut dhcp_msg =
             v6::Message::new_with_id(self.msg_type.into(), self.xid);
 
         dhcp_msg
             .opts_mut()
-            .insert(DhcpOption::ClientId(self.config.duid.to_vec()));
+            .insert(DhcpOption::ClientId(self.duid.to_vec()));
 
-        match self.config.ia_type {
-            DhcpV6IaType::NonTemporaryAddresses => {
+        match self.mode {
+            DhcpV6Mode::Statefull(DhcpV6IaType::NonTemporaryAddresses) => {
                 dhcp_msg.opts_mut().insert(DhcpOption::IANA(v6::IANA {
                     id: self
                         .lease
@@ -136,7 +140,7 @@ impl DhcpV6Message {
                         .unwrap_or_default(),
                 }))
             }
-            DhcpV6IaType::TemporaryAddresses => {
+            DhcpV6Mode::Statefull(DhcpV6IaType::TemporaryAddresses) => {
                 dhcp_msg.opts_mut().insert(DhcpOption::IATA(v6::IATA {
                     id: self
                         .lease
@@ -150,7 +154,7 @@ impl DhcpV6Message {
                         .unwrap_or_default(),
                 }))
             }
-            DhcpV6IaType::PrefixDelegation => {
+            DhcpV6Mode::Statefull(DhcpV6IaType::PrefixDelegation) => {
                 dhcp_msg.opts_mut().insert(DhcpOption::IAPD(v6::IAPD {
                     id: self
                         .lease
@@ -168,10 +172,28 @@ impl DhcpV6Message {
                         .unwrap_or_default(),
                 }))
             }
+            DhcpV6Mode::Stateless => {
+                return Err(DhcpError::new(
+                    ErrorKind::NotSupported,
+                    "Stateless DHCPv6 is not supported yet".to_string(),
+                ));
+            }
         }
 
         match self.msg_type {
-            DhcpV6MessageType::SOLICIT | DhcpV6MessageType::REBIND => (),
+            DhcpV6MessageType::SOLICIT => {
+                // RFC 8415: 18.2.1. Creation and Transmission of Solicit
+                // Messages:
+                //      The client MUST include an Option Request option (ORO)
+                //      (see Section 21.7) to request the SOL_MAX_RT option
+                //      (see Section 21.24) and any other options the client is
+                //      interested in receiving.
+                dhcp_msg.opts_mut().insert(DhcpOption::ORO(v6::ORO {
+                    opts: vec![OptionCode::SolMaxRt],
+                }));
+                // TODO(Gris Ge): Insert hint on our value SOL_MAX_RT
+            }
+            DhcpV6MessageType::REBIND => (),
             DhcpV6MessageType::REQUEST
             | DhcpV6MessageType::RENEW
             | DhcpV6MessageType::RELEASE => {
@@ -202,22 +224,20 @@ impl DhcpV6Message {
                 .insert(DhcpOption::ElapsedTime(self.elapsed_time));
         }
 
-        log::debug!("DHCP message {dhcp_msg:?}");
-
         let mut dhcp_msg_buff = Vec::new();
         let mut e = v6::Encoder::new(&mut dhcp_msg_buff);
         dhcp_msg.encode(&mut e)?;
         Ok(dhcp_msg_buff)
     }
 
-    pub(crate) fn from_dhcp_pkg(payload: &[u8]) -> Result<Self, DhcpError> {
+    pub(crate) fn from_dhcp_packet(payload: &[u8]) -> Result<Self, DhcpError> {
         let v6_dhcp_msg = v6::Message::decode(&mut Decoder::new(payload))
             .map_err(|decode_error| {
                 let e = DhcpError::new(
                     ErrorKind::InvalidDhcpServerReply,
                     format!(
-                        "Failed to parse DHCPv6 message from payload of pkg \
-                         {payload:?}: {decode_error}"
+                        "Failed to parse DHCPv6 message from payload of \
+                         packet {payload:?}: {decode_error}"
                     ),
                 );
                 log::error!("{e}");
@@ -244,16 +264,24 @@ impl DhcpV6Message {
 }
 
 fn validate_lease(
-    config: &DhcpV6Config,
+    mode: DhcpV6Mode,
     lease: &DhcpV6Lease,
 ) -> Result<(), DhcpError> {
-    if lease.ia_type != config.ia_type {
+    let ia_type = if let DhcpV6Mode::Statefull(i) = mode {
+        i
+    } else {
+        return Err(DhcpError::new(
+            ErrorKind::NotSupported,
+            "Stateless DHCPv6 is not supported yet".to_string(),
+        ));
+    };
+    if lease.ia_type != ia_type {
         return Err(DhcpError::new(
             ErrorKind::InvalidArgument,
             format!(
                 "DHCPv6 lease contains different IA type({}) with config({}) \
                  DhcpV6Message::load_lease() with correct lease",
-                lease.ia_type, config.ia_type
+                lease.ia_type, ia_type
             ),
         ));
     }

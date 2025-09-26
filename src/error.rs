@@ -5,7 +5,9 @@ pub enum ErrorKind {
     Timeout,
     InvalidArgument,
     InvalidDhcpServerReply,
+    IoError,
     NoLease,
+    NotSupported,
     Bug,
     LeaseExpired,
 }
@@ -27,6 +29,16 @@ impl DhcpError {
 
     pub fn msg(&self) -> &str {
         self.msg.as_str()
+    }
+
+    pub fn context<T>(self, msg: T) -> Self
+    where
+        T: std::fmt::Display,
+    {
+        Self {
+            kind: self.kind,
+            msg: format!("{} caused by {}", msg, self.msg),
+        }
     }
 }
 
@@ -62,14 +74,14 @@ impl From<dhcproto::v4::EncodeError> for DhcpError {
     }
 }
 
-impl From<etherparse::WriteError> for DhcpError {
-    fn from(e: etherparse::WriteError) -> Self {
-        Self::new(ErrorKind::Bug, format!("etherparse protocol error: {e}"))
-    }
-}
-
 impl From<std::net::AddrParseError> for DhcpError {
     fn from(e: std::net::AddrParseError) -> Self {
         Self::new(ErrorKind::Bug, format!("IPv4 address parse error: {e}"))
+    }
+}
+
+impl From<rtnetlink::Error> for DhcpError {
+    fn from(e: rtnetlink::Error) -> Self {
+        Self::new(ErrorKind::IoError, format!("netlink error: {e}"))
     }
 }

@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::io::Read;
-use std::net::{Ipv4Addr, Ipv6Addr};
-use std::process::Command;
-use std::str::FromStr;
+use std::{
+    io::Read,
+    net::{Ipv4Addr, Ipv6Addr},
+    process::Command,
+    str::FromStr,
+};
 
 const PID_FILE_PATH: &str = "/tmp/mozim_test_dnsmasq_pid";
 const TEST_DHCPD_NETNS: &str = "mozim_test";
@@ -175,4 +177,10 @@ where
     remove_test_veth_nics();
     remove_test_net_namespace();
     assert!(result.is_ok())
+}
+
+pub(crate) fn init_log() {
+    let mut log_builder = env_logger::Builder::new();
+    log_builder.filter(Some("mozim"), log::LevelFilter::Trace);
+    log_builder.try_init().ok();
 }

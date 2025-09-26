@@ -2,16 +2,23 @@
 
 mod client;
 mod config;
-mod event;
 mod lease;
 mod msg;
+mod option;
+mod rebind;
+mod renew;
+mod request;
+mod socket;
+mod solicit;
+mod state;
 mod time;
 
-pub use self::client::DhcpV6Client;
-pub use self::config::{
-    DhcpV6Config, DhcpV6IaType, Dhcpv6Duid, Dhcpv6DuidEn, Dhcpv6DuidLl,
-    Dhcpv6DuidLlt, Dhcpv6DuidUuid,
+pub use self::{
+    client::DhcpV6Client,
+    config::{
+        DhcpV6Config, DhcpV6Duid, DhcpV6DuidEn, DhcpV6DuidLl, DhcpV6DuidLlt,
+        DhcpV6DuidUuid, DhcpV6IaType, DhcpV6Mode,
+    },
+    lease::DhcpV6Lease,
+    state::DhcpV6State,
 };
-pub use self::event::DhcpV6Event;
-pub use self::lease::DhcpV6Lease;
-pub use self::msg::DhcpV6Message;
