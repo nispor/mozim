@@ -5,32 +5,23 @@ use std::net::Ipv4Addr;
 use dhcproto::{v4, Decodable, Decoder, Encodable};
 
 use crate::{
-    mac::{
-        mac_address_to_eth_mac_bytes, mac_str_to_u8_array,
-        BROADCAST_MAC_ADDRESS,
-    },
-    DhcpError, DhcpV4Config, DhcpV4Lease, ErrorKind,
+    mac::BROADCAST_MAC_ADDRESS, DhcpError, DhcpV4Config, DhcpV4Lease, ErrorKind,
 };
 
 const DEFAULT_TTL: u8 = 128;
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum DhcpV4MessageType {
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
+pub(crate) enum DhcpV4MessageType {
     Discovery,
     Offer,
     Request,
     Ack,
-    Nack,
-    Decline,
+    // Nack,
+    // Decline,
     Release,
-    Inform,
+    // Inform,
+    #[default]
     Unknown,
-}
-
-impl Default for DhcpV4MessageType {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 impl std::fmt::Display for DhcpV4MessageType {
@@ -43,10 +34,10 @@ impl std::fmt::Display for DhcpV4MessageType {
                 Self::Offer => "offer",
                 Self::Request => "request",
                 Self::Ack => "ack",
-                Self::Nack => "nack",
-                Self::Decline => "decline",
+                // Self::Nack => "nack",
+                // Self::Decline => "decline",
                 Self::Release => "release",
-                Self::Inform => "inform",
+                // Self::Inform => "inform",
                 Self::Unknown => "unknown",
             }
         )
@@ -54,16 +45,16 @@ impl std::fmt::Display for DhcpV4MessageType {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
-pub struct DhcpV4Message {
-    pub msg_type: DhcpV4MessageType,
-    pub lease: Option<DhcpV4Lease>,
-    pub config: DhcpV4Config,
+pub(crate) struct DhcpV4Message {
+    pub(crate) msg_type: DhcpV4MessageType,
+    pub(crate) lease: Option<DhcpV4Lease>,
+    pub(crate) config: DhcpV4Config,
     renew_or_rebind: bool,
     pub(crate) xid: u32,
 }
 
 impl DhcpV4Message {
-    pub fn new(
+    pub(crate) fn new(
         config: &DhcpV4Config,
         msg_type: DhcpV4MessageType,
         xid: u32,
@@ -77,7 +68,7 @@ impl DhcpV4Message {
         }
     }
 
-    pub fn load_lease(&mut self, lease: DhcpV4Lease) -> &mut Self {
+    pub(crate) fn load_lease(&mut self, lease: DhcpV4Lease) -> &mut Self {
         self.lease = Some(lease);
         self
     }
@@ -87,7 +78,7 @@ impl DhcpV4Message {
         self
     }
 
-    pub(crate) fn to_dhcp_pkg(&self) -> Result<Vec<u8>, DhcpError> {
+    pub(crate) fn to_dhcp_packet(&self) -> Result<Vec<u8>, DhcpError> {
         let mut dhcp_msg = v4::Message::default();
         dhcp_msg.set_flags(v4::Flags::default());
         dhcp_msg.set_xid(self.xid);
@@ -97,8 +88,7 @@ impl DhcpV4Message {
         }
 
         if !self.config.src_mac.is_empty() {
-            dhcp_msg
-                .set_chaddr(&mac_str_to_u8_array(self.config.src_mac.as_str()));
+            dhcp_msg.set_chaddr(&self.config.src_mac);
         }
 
         if self.msg_type == DhcpV4MessageType::Discovery {
@@ -185,7 +175,7 @@ impl DhcpV4Message {
             ));
         }
 
-        log::debug!("DHCP message {dhcp_msg:?}");
+        log::trace!("Generated DHCP message {dhcp_msg:?}");
 
         let mut dhcp_msg_buff = Vec::new();
         let mut e = v4::Encoder::new(&mut dhcp_msg_buff);
@@ -193,13 +183,13 @@ impl DhcpV4Message {
         Ok(dhcp_msg_buff)
     }
 
-    pub(crate) fn from_dhcp_pkg(payload: &[u8]) -> Result<Self, DhcpError> {
+    pub(crate) fn from_dhcp_packet(payload: &[u8]) -> Result<Self, DhcpError> {
         let v4_dhcp_msg = v4::Message::decode(&mut Decoder::new(payload))
             .map_err(|decode_error| {
                 let e = DhcpError::new(
                     ErrorKind::InvalidDhcpServerReply,
                     format!(
-                        "Failed to parse DHCP message from payload of pkg \
+                        "Failed to parse DHCP message from payload of packet \
                          {payload:?}: {decode_error}"
                     ),
                 );
@@ -234,10 +224,10 @@ impl DhcpV4Message {
         Ok(ret)
     }
 
-    pub(crate) fn to_eth_pkg_broadcast(&self) -> Result<Vec<u8>, DhcpError> {
-        let dhcp_msg_buff = self.to_dhcp_pkg()?;
-        gen_eth_pkg(
-            &mac_address_to_eth_mac_bytes(&self.config.src_mac)?,
+    pub(crate) fn to_eth_packet_broadcast(&self) -> Result<Vec<u8>, DhcpError> {
+        let dhcp_msg_buff = self.to_dhcp_packet()?;
+        gen_eth_packet(
+            &self.config.src_mac,
             &BROADCAST_MAC_ADDRESS,
             &Ipv4Addr::new(0, 0, 0, 0),
             &Ipv4Addr::new(255, 255, 255, 255),
@@ -247,13 +237,13 @@ impl DhcpV4Message {
         )
     }
 
-    pub(crate) fn to_proxy_eth_pkg_unicast(
+    pub(crate) fn to_proxy_eth_packet_unicast(
         &self,
     ) -> Result<Vec<u8>, DhcpError> {
         if let Some(lease) = self.lease.as_ref() {
-            let dhcp_msg_buff = self.to_dhcp_pkg()?;
-            gen_eth_pkg(
-                &mac_address_to_eth_mac_bytes(&self.config.src_mac)?,
+            let dhcp_msg_buff = self.to_dhcp_packet()?;
+            gen_eth_packet(
+                &self.config.src_mac,
                 &lease.srv_mac,
                 &lease.yiaddr,
                 &lease.siaddr,
@@ -264,37 +254,51 @@ impl DhcpV4Message {
         } else {
             Err(DhcpError::new(
                 ErrorKind::Bug,
-                "No lease found for `to_proxy_eth_pkg_unicast()`".to_string(),
+                "No lease found for `to_proxy_eth_packet_unicast()`"
+                    .to_string(),
             ))
         }
     }
 
-    pub(crate) fn from_eth_pkg(data: &[u8]) -> Result<Self, DhcpError> {
-        let pkg = match etherparse::SlicedPacket::from_ethernet(data) {
+    pub(crate) fn from_eth_packet(data: &[u8]) -> Result<Self, DhcpError> {
+        let packet = match etherparse::SlicedPacket::from_ethernet(data) {
             Err(error) => {
-                let e = DhcpError::new(
+                return Err(DhcpError::new(
                     ErrorKind::InvalidDhcpServerReply,
                     format!(
-                        "Failed to parse ethernet package to Dhcpv4Offer: \
+                        "Failed to parse ethernet package to DHCP message: \
                          {error}"
                     ),
-                );
-                log::error!("{e}");
-                return Err(e);
+                ));
             }
             Ok(v) => v,
         };
-        let mut ret = Self::from_dhcp_pkg(pkg.payload)?;
-        if let Some(eth_header) = pkg.link.map(|l| l.to_header()) {
-            if let Some(lease) = ret.lease.as_mut() {
-                lease.srv_mac = eth_header.source;
+        if let Some(etherparse::TransportSlice::Udp(udp_packet)) =
+            packet.transport
+        {
+            let mut ret = Self::from_dhcp_packet(udp_packet.payload())?;
+            if let Some(eth_header) = packet
+                .link
+                .and_then(|l| l.to_header())
+                .and_then(|h| h.ethernet2())
+            {
+                if let Some(lease) = ret.lease.as_mut() {
+                    lease.srv_mac = eth_header.source;
+                }
             }
+            Ok(ret)
+        } else {
+            Err(DhcpError::new(
+                ErrorKind::InvalidDhcpServerReply,
+                "Failed to parse ethernet package to DHCP message: Not UDP \
+                 payload"
+                    .to_string(),
+            ))
         }
-        Ok(ret)
     }
 }
 
-fn gen_eth_pkg(
+fn gen_eth_packet(
     src_mac: &[u8; 6],
     dst_mac: &[u8; 6],
     src_ip: &Ipv4Addr,
@@ -307,9 +311,14 @@ fn gen_eth_pkg(
         .ipv4(src_ip.octets(), dst_ip.octets(), DEFAULT_TTL)
         .udp(src_port, dst_port);
 
-    let mut pkg = Vec::<u8>::with_capacity(builder.size(payload.len()));
+    let mut packet = Vec::<u8>::with_capacity(builder.size(payload.len()));
 
-    builder.write(&mut pkg, payload)?;
+    builder.write(&mut packet, payload).map_err(|e| {
+        DhcpError::new(
+            ErrorKind::Bug,
+            format!("Failed to generate ethernet packet: {e}"),
+        )
+    })?;
 
-    Ok(pkg)
+    Ok(packet)
 }

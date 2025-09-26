@@ -1,55 +1,84 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{DhcpV4Client, DhcpV4Config, DhcpV4Lease};
-
 use super::env::{
-    with_dhcp_env, FOO1_CLIENT_ID, FOO1_HOSTNAME, FOO1_STATIC_IP, TEST_NIC_CLI,
+    init_log, with_dhcp_env, FOO1_HOSTNAME,
+    FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID, TEST_CLS_DST, TEST_CLS_DST_LEN,
+    TEST_CLS_RT_ADDR, TEST_NIC_CLI,
+};
+use crate::{
+    DhcpV4ClasslessRoute, DhcpV4Client, DhcpV4Config, DhcpV4Lease, DhcpV4State,
 };
 
-const POLL_WAIT_TIME: u32 = 5;
+const FOO2_HOSTNAME: &str = "foo2";
 
 #[test]
-fn test_dhcpv4_manual_client_id() {
+fn test_dhcpv4() {
+    init_log();
     with_dhcp_env(|| {
-        let mut config = DhcpV4Config::new(TEST_NIC_CLI);
-        config.set_client_id(0, FOO1_CLIENT_ID.as_bytes());
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .enable_io()
+            .build()
+            .unwrap();
 
-        let mut client_id = vec![0];
-        client_id.extend_from_slice(FOO1_CLIENT_ID.as_bytes());
-        assert_eq!(config.client_id, client_id);
-
-        let mut cli = DhcpV4Client::init(config, None).unwrap();
-
-        let lease = get_lease(&mut cli);
-
+        let lease = rt.block_on(get_lease());
         assert!(lease.is_some());
         if let Some(lease) = lease {
-            // Even though we didn't send it in the DHCP request, dnsmasq should
-            // return the hostname since it was set in the --dhcp-host
-            // option
+            // We should get FOO2_HOSTNAME as the hostname since that's what we
+            // sent in option 12 in the DHCP request.
             assert_eq!(
                 lease.host_name.as_ref(),
-                Some(&FOO1_HOSTNAME.to_string())
+                Some(&FOO2_HOSTNAME.to_string())
             );
-            // If the client id was set correctly to FOO1_CLIENT_ID then the
-            // server should return FOO1_STATIC_IP.
-            assert_eq!(lease.yiaddr, FOO1_STATIC_IP,);
+            // If the client id was set correctly to FOO1_HOSTNAME via the
+            // call to use_host_name_as_client_id(), then the server should
+            // return FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID.
+            assert_eq!(lease.yiaddr, FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID,);
+
+            assert_eq!(
+                lease.classless_routes.as_deref().unwrap(),
+                &[DhcpV4ClasslessRoute {
+                    destination: TEST_CLS_DST,
+                    prefix_length: TEST_CLS_DST_LEN,
+                    router: TEST_CLS_RT_ADDR,
+                }]
+            );
+
+            assert_eq!(
+                lease.get_option_raw(249).unwrap(),
+                &[249, 8, 24, 203, 0, 113, 192, 0, 2, 40]
+            );
         }
     })
 }
 
-fn get_lease(cli: &mut DhcpV4Client) -> Option<DhcpV4Lease> {
-    while let Ok(events) = cli.poll(POLL_WAIT_TIME) {
-        for event in events {
-            match cli.process(event) {
-                Ok(Some(lease)) => {
-                    return Some(lease);
-                }
-                Ok(None) => (),
-                Err(_) => {
-                    return None;
-                }
-            }
+async fn get_lease() -> Option<DhcpV4Lease> {
+    let mut config = DhcpV4Config::new(TEST_NIC_CLI);
+    // Since hostname hasn't been set yet, client_id should be empty.
+    config.use_host_name_as_client_id();
+    assert_eq!(config.client_id.len(), 0);
+
+    config.set_host_name(FOO1_HOSTNAME);
+    config.use_host_name_as_client_id();
+    // Now client id should be set to 0 + hostname.
+    let mut client_id = vec![0];
+    client_id.extend_from_slice(FOO1_HOSTNAME.as_bytes());
+    assert_eq!(config.client_id, client_id);
+    // config.use_host_name_as_client_id() copies the current hostname to
+    // client_id at the time it was called.  We should now change the
+    // hostname to something dnsmasq doesn't know about so we're sure we get
+    // the correct ip address based on the client id (original hostname) and
+    // not the hostname we're now sending in option 12.
+    config.set_host_name(FOO2_HOSTNAME);
+
+    let mut cli = DhcpV4Client::init(config, None).await.unwrap();
+
+    while let Ok(state) = cli.run().await {
+        if let DhcpV4State::Done(lease) = state {
+            cli.release(&lease).await.unwrap();
+            return Some(*lease);
+        } else {
+            println!("DHCP state {state}");
         }
     }
     None

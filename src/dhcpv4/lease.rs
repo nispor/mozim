@@ -14,9 +14,9 @@ pub struct DhcpV4Lease {
     pub(crate) srv_mac: [u8; 6],
     pub siaddr: Ipv4Addr,
     pub yiaddr: Ipv4Addr,
-    pub t1: u32,
-    pub t2: u32,
-    pub lease_time: u32,
+    pub t1_sec: u32,
+    pub t2_sec: u32,
+    pub lease_time_sec: u32,
     pub srv_id: Ipv4Addr,
     pub subnet_mask: Ipv4Addr,
     pub broadcast_addr: Option<Ipv4Addr>,
@@ -36,9 +36,9 @@ impl Default for DhcpV4Lease {
             srv_mac: [u8::MAX; 6],
             siaddr: Ipv4Addr::new(0, 0, 0, 0),
             yiaddr: Ipv4Addr::new(0, 0, 0, 0),
-            t1: 0,
-            t2: 0,
-            lease_time: 0,
+            t1_sec: 0,
+            t2_sec: 0,
+            lease_time_sec: 0,
             srv_id: Ipv4Addr::new(0, 0, 0, 0),
             subnet_mask: Ipv4Addr::new(0, 0, 0, 0),
             broadcast_addr: None,
@@ -67,10 +67,10 @@ impl std::convert::TryFrom<&v4::Message> for DhcpV4Lease {
             match dhcp_opt {
                 DhcpOption::MessageType(_) => (),
                 DhcpOption::Renewal(v) => {
-                    ret.t1 = *v;
+                    ret.t1_sec = *v;
                 }
                 DhcpOption::Rebinding(v) => {
-                    ret.t2 = *v;
+                    ret.t2_sec = *v;
                 }
                 DhcpOption::InterfaceMtu(v) => {
                     ret.mtu = Some(*v);
@@ -79,7 +79,7 @@ impl std::convert::TryFrom<&v4::Message> for DhcpV4Lease {
                     ret.srv_id = *v;
                 }
                 DhcpOption::AddressLeaseTime(v) => {
-                    ret.lease_time = *v;
+                    ret.lease_time_sec = *v;
                 }
                 DhcpOption::SubnetMask(v) => {
                     ret.subnet_mask = *v;
@@ -124,7 +124,7 @@ impl std::convert::TryFrom<&v4::Message> for DhcpV4Lease {
                 _ => (),
             }
         }
-        // TODO: Validate T1 < T2 < lease_time.
+        // TODO: Validate T1 < T2 < lease_time_sec.
         Ok(ret)
     }
 }

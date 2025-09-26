@@ -4,27 +4,33 @@ use dhcproto::v4::OptionCode;
 
 use super::option::V4_OPT_CODE_MS_CLASSLESS_STATIC_ROUTE;
 use crate::{
-    mac::mac_str_to_u8_array, nispor::get_nispor_iface,
-    socket::DEFAULT_SOCKET_TIMEOUT, DhcpError,
+    mac::parse_mac,
+    netlink::{get_iface_index, get_iface_index_mac},
+    DhcpError, ErrorKind, ETH_ALEN,
 };
 
 // https://www.iana.org/assignments/arp-parameters/arp-parameters.xhtml#arp-parameters-2
 const ARP_HW_TYPE_ETHERNET: u8 = 1;
 
-const DEFAULT_TIMEOUT: u32 = 120;
-
+// TODO: Support allow list and deny list for DHCP servers.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct DhcpV4Config {
-    pub(crate) iface_name: String,
-    pub(crate) iface_index: u32,
-    pub(crate) src_mac: String,
+    /// Interface to run DHCP against.
+    pub iface_name: String,
+    /// Interface index to run DHCP against.
+    pub iface_index: u32,
+    /// MAC address of interface or proxy.
+    pub src_mac: [u8; ETH_ALEN],
     pub(crate) client_id: Vec<u8>,
     pub(crate) host_name: String,
-    // TODO: Support allow list and deny list for DHCP servers.
-    pub(crate) timeout: u32,
-    pub(crate) socket_timeout: u32,
-    pub(crate) is_proxy: bool,
+    /// Whether acting as DHCP proxy(whether mozim should listen on DHCP reply
+    /// not target for interface MAC address).
+    pub is_proxy: bool,
     pub(crate) request_opts: Vec<OptionCode>,
+    /// Timeout in seconds for getting/refreshing lease.
+    /// 0 means infinitely.
+    /// By default is wait infinitely.
+    pub timeout_sec: u32,
 }
 
 impl Default for DhcpV4Config {
@@ -32,12 +38,11 @@ impl Default for DhcpV4Config {
         Self {
             iface_name: String::new(),
             iface_index: 0,
-            src_mac: String::new(),
+            src_mac: [0u8; ETH_ALEN],
             client_id: Vec::new(),
             host_name: String::new(),
-            timeout: DEFAULT_TIMEOUT,
-            socket_timeout: DEFAULT_SOCKET_TIMEOUT,
             is_proxy: false,
+            timeout_sec: 0,
             request_opts: vec![
                 OptionCode::Hostname,
                 OptionCode::SubnetMask,
@@ -61,29 +66,88 @@ impl DhcpV4Config {
         }
     }
 
-    // Check whether interface exists and resolve iface_index and MAC
-    pub(crate) fn init(&mut self) -> Result<(), DhcpError> {
-        let np_iface = get_nispor_iface(self.iface_name.as_str(), false)?;
-        self.iface_index = np_iface.index;
-        if !self.is_proxy {
-            self.src_mac = np_iface.mac_address;
+    pub fn set_iface_index(&mut self, index: u32) -> &mut Self {
+        self.iface_index = index;
+        self
+    }
+
+    pub fn set_iface_mac(&mut self, mac: &str) -> Result<&mut Self, DhcpError> {
+        let src_mac = parse_mac(mac)?;
+        if src_mac.len() != ETH_ALEN {
+            return Err(DhcpError::new(
+                ErrorKind::NotSupported,
+                format!(
+                    "Invalid MAC address {mac}, expecting format \
+                     01:02:2a:2c:f7:04"
+                ),
+            ));
+        }
+        self.src_mac.copy_from_slice(&src_mac[..ETH_ALEN]);
+        Ok(self)
+    }
+
+    pub(crate) fn need_resolve(&self) -> bool {
+        self.iface_index == 0 || self.src_mac.is_empty()
+    }
+
+    #[cfg(feature = "netlink")]
+    pub(crate) async fn resolve(&mut self) -> Result<(), DhcpError> {
+        if self.is_proxy {
+            self.iface_index = get_iface_index(&self.iface_name).await?;
+        } else {
+            let (iface_index, src_mac) =
+                get_iface_index_mac(&self.iface_name).await?;
+
+            if src_mac.len() != ETH_ALEN {
+                return Err(DhcpError::new(
+                    ErrorKind::NotSupported,
+                    format!(
+                        "Interface {} is holding MAC address {:?} which is not
+                    supported yet, only support MAC with {} u8",
+                        self.iface_name, src_mac, ETH_ALEN,
+                    ),
+                ));
+            } else {
+                self.iface_index = iface_index;
+                self.src_mac.copy_from_slice(&src_mac[..ETH_ALEN]);
+            }
         }
         Ok(())
     }
 
-    pub fn new_proxy(out_iface_name: &str, proxy_mac: &str) -> Self {
-        Self {
-            iface_name: out_iface_name.to_string(),
-            src_mac: proxy_mac.to_string(),
-            is_proxy: true,
-            ..Default::default()
-        }
+    #[cfg(not(feature = "netlink"))]
+    pub(crate) async fn resolve(&mut self) -> Result<(), DhcpError> {
+        Err(DhcpError::new(
+            ErrorKind::InvalidArgument,
+            "Feature `netlink` not enabled, cannot resolve interface {} index \
+             and mac address, please set them manually",
+            self.iface_name,
+        ))
     }
 
-    // Set timeout in seconds
-    pub fn set_timeout(&mut self, timeout: u32) -> &mut Self {
-        self.timeout = timeout;
-        self
+    pub fn new_proxy(
+        out_iface_name: &str,
+        proxy_mac: &str,
+    ) -> Result<Self, DhcpError> {
+        let mac = parse_mac(proxy_mac)?;
+        if mac.len() != ETH_ALEN {
+            Err(DhcpError::new(
+                ErrorKind::NotSupported,
+                format!(
+                    "Supported MAC address {proxy_mac}, expecting format \
+                     01:02:2a:2c:f7:04"
+                ),
+            ))
+        } else {
+            let mut src_mac = [0; ETH_ALEN];
+            src_mac.copy_from_slice(&mac[..ETH_ALEN]);
+            Ok(Self {
+                iface_name: out_iface_name.to_string(),
+                src_mac,
+                is_proxy: true,
+                ..Default::default()
+            })
+        }
     }
 
     pub fn set_host_name(&mut self, host_name: &str) -> &mut Self {
@@ -93,8 +157,7 @@ impl DhcpV4Config {
 
     pub fn use_mac_as_client_id(&mut self) -> &mut Self {
         self.client_id = vec![ARP_HW_TYPE_ETHERNET];
-        self.client_id
-            .append(&mut mac_str_to_u8_array(&self.src_mac));
+        self.client_id.extend_from_slice(&self.src_mac);
         self
     }
 
@@ -107,6 +170,14 @@ impl DhcpV4Config {
             let host_name = self.host_name.clone();
             self.set_client_id(0, host_name.as_bytes());
         }
+        self
+    }
+
+    /// Timeout in seconds for getting/refreshing lease.
+    /// 0 means infinitely.
+    /// By default is wait infinitely.
+    pub fn set_timeout_sec(&mut self, timeout_sec: u32) -> &mut Self {
+        self.timeout_sec = timeout_sec;
         self
     }
 

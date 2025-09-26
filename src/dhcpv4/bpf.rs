@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::{DhcpError, ErrorKind};
 
 const DHCP_BPF_LEN: u16 = 11;
@@ -61,6 +63,7 @@ const BPF_FILTER_RAW: [(u16, u8, u8, u32); DHCP_BPF_LEN as usize] = [
     // Drop this package
     (BPF_RET, 0, 0, 0x00000000),
 ];
+
 pub(crate) fn apply_dhcp_bpf(fd: libc::c_int) -> Result<(), DhcpError> {
     let mut raw_filters = [libc::sock_filter {
         code: 0,

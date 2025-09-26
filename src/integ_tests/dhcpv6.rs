@@ -1,41 +1,40 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{DhcpV6Client, DhcpV6Config, DhcpV6IaType, DhcpV6Lease};
-
-use super::env::{with_dhcp_env, FOO1_STATIC_IPV6, TEST_NIC_CLI};
-
-const POLL_WAIT_TIME: u32 = 5;
+use super::env::{init_log, with_dhcp_env, FOO1_STATIC_IPV6, TEST_NIC_CLI};
+use crate::{DhcpV6Client, DhcpV6Config, DhcpV6Lease, DhcpV6Mode, DhcpV6State};
 
 #[test]
-fn test_dhcpv6_use_default_client_id() {
+fn test_dhcpv6() {
+    init_log();
     with_dhcp_env(|| {
-        let config = DhcpV6Config::new(
-            TEST_NIC_CLI,
-            DhcpV6IaType::NonTemporaryAddresses,
-        );
-        let mut cli = DhcpV6Client::init(config, None).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .enable_io()
+            .build()
+            .unwrap();
 
-        let lease = get_lease(&mut cli);
-        println!("Got lease {:?}", lease);
+        let lease = rt.block_on(get_lease());
         assert!(lease.is_some());
         if let Some(lease) = lease {
+            // If the client id was set correctly to FOO1_HOSTNAME via the
+            // call to use_host_name_as_client_id(), then the server should
+            // return FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID.
             assert_eq!(lease.addr, FOO1_STATIC_IPV6);
         }
     })
 }
 
-fn get_lease(cli: &mut DhcpV6Client) -> Option<DhcpV6Lease> {
-    while let Ok(events) = cli.poll(POLL_WAIT_TIME) {
-        for event in events {
-            match cli.process(event) {
-                Ok(Some(lease)) => {
-                    return Some(lease);
-                }
-                Ok(None) => (),
-                Err(_) => {
-                    return None;
-                }
-            }
+async fn get_lease() -> Option<DhcpV6Lease> {
+    let config =
+        DhcpV6Config::new(TEST_NIC_CLI, DhcpV6Mode::new_non_temp_addr());
+    let mut cli = DhcpV6Client::init(config, None).await.unwrap();
+
+    while let Ok(state) = cli.run().await {
+        if let DhcpV6State::Done(lease) = state {
+            cli.release(&lease).await.unwrap();
+            return Some(*lease);
+        } else {
+            println!("DHCP state {state}");
         }
     }
     None
