@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::net::Ipv6Addr;
+use std::{net::Ipv6Addr, time::Duration};
 
-use dhcproto::{
-    v6,
-    v6::{DhcpOption, DhcpOptions},
+use super::{msg::DhcpV6Message, option::DhcpV6Options};
+use crate::{
+    DhcpError, DhcpV6Duid, DhcpV6IaType, DhcpV6Option, DhcpV6OptionCode,
+    ErrorKind,
 };
 
-use super::option::DhcpV6Options;
-use crate::{DhcpError, DhcpV6IaType, ErrorKind};
+// Section 5 of RFC4941, one week
+const TEMP_VALID_LIFETIME: Duration = Duration::from_secs(60u64 * 60 * 24 * 7);
+// Section 5 of RFC4941, one day
+const TEMP_PREFERRED_LIFETIME: Duration = Duration::from_secs(60u64 * 60 * 24);
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 #[non_exhaustive]
@@ -17,14 +20,16 @@ pub struct DhcpV6Lease {
     pub t2_sec: u32,
     pub preferred_time_sec: u32,
     pub valid_time_sec: u32,
-    pub xid: [u8; 3],
+    pub xid: u32,
     pub iaid: u32,
-    pub ia_type: DhcpV6IaType,
+    pub ia_type: Option<DhcpV6IaType>,
     pub addr: Ipv6Addr,
+    // Only valid for IA_PD(Prefix Delegation)
     pub prefix_len: u8,
-    pub cli_duid: Vec<u8>,
-    pub srv_duid: Vec<u8>,
+    pub cli_duid: DhcpV6Duid,
+    pub srv_duid: DhcpV6Duid,
     pub srv_ip: Ipv6Addr,
+    pub ntp_srvs: Vec<String>,
     dhcp_opts: DhcpV6Options,
 }
 
@@ -35,102 +40,183 @@ impl Default for DhcpV6Lease {
             t2_sec: 0,
             preferred_time_sec: 0,
             valid_time_sec: 0,
-            xid: [0; 3],
+            xid: 0,
             iaid: 0,
-            ia_type: DhcpV6IaType::TemporaryAddresses,
+            ia_type: None,
             addr: Ipv6Addr::UNSPECIFIED,
             prefix_len: 128,
-            cli_duid: Vec::new(),
-            srv_duid: Vec::new(),
+            cli_duid: DhcpV6Duid::default(),
+            srv_duid: DhcpV6Duid::default(),
             dhcp_opts: DhcpV6Options::default(),
             srv_ip: Ipv6Addr::UNSPECIFIED,
+            ntp_srvs: Vec::new(),
         }
-    }
-}
-
-impl std::convert::TryFrom<&v6::Message> for DhcpV6Lease {
-    type Error = DhcpError;
-    fn try_from(v6_dhcp_msg: &v6::Message) -> Result<Self, Self::Error> {
-        let mut ret = Self {
-            xid: v6_dhcp_msg.xid(),
-            dhcp_opts: DhcpV6Options::new(v6_dhcp_msg.opts().iter()),
-            ..Default::default()
-        };
-        for dhcp_opt in v6_dhcp_msg.opts().iter() {
-            match dhcp_opt {
-                DhcpOption::ClientId(v) => ret.cli_duid = v.clone(),
-                DhcpOption::ServerId(v) => ret.srv_duid = v.clone(),
-                DhcpOption::IANA(v) => {
-                    ret.ia_type = DhcpV6IaType::NonTemporaryAddresses;
-                    ret.iaid = v.id;
-                    ret.t1_sec = v.t1;
-                    ret.t2_sec = v.t2;
-                    parse_dhcp_opt_iaadr(&v.opts, &mut ret);
-                }
-                DhcpOption::IATA(v) => {
-                    ret.ia_type = DhcpV6IaType::TemporaryAddresses;
-                    ret.iaid = v.id;
-                    parse_dhcp_opt_iaadr(&v.opts, &mut ret);
-                    // Temporary addresses does not have T1/T2, they
-                    // are not supposed to be renewed. RFC 8415 trust client's
-                    // discretion on this.
-                }
-                DhcpOption::IAPD(v) => {
-                    ret.ia_type = DhcpV6IaType::PrefixDelegation;
-                    ret.iaid = v.id;
-                    ret.t1_sec = v.t1;
-                    ret.t2_sec = v.t2;
-                    parse_dhcp_opt_iaadr(&v.opts, &mut ret);
-                }
-                DhcpOption::ServerUnicast(srv_ip) => {
-                    ret.srv_ip = *srv_ip;
-                }
-                DhcpOption::StatusCode(v) => {
-                    if v.status != v6::Status::Success {
-                        return Err(DhcpError::new(
-                            ErrorKind::NoLease,
-                            format!(
-                                "DHCP server reply status code {}({:?}), \
-                                 message {}",
-                                u16::from(v.status),
-                                v.status,
-                                v.msg
-                            ),
-                        ));
-                    }
-                }
-                v => {
-                    log::debug!("Unsupported DHCPv6 opt {v:?}");
-                }
-            }
-        }
-
-        // TODO: Validate T1 < T2 < lease_time.
-        Ok(ret)
-    }
-}
-
-fn parse_dhcp_opt_iaadr(opts: &DhcpOptions, lease: &mut DhcpV6Lease) {
-    if let Some(DhcpOption::IAPrefix(a)) = opts.get(v6::OptionCode::IAPrefix) {
-        lease.addr = a.prefix_ip;
-        lease.prefix_len = a.prefix_len;
-        lease.preferred_time_sec = a.preferred_lifetime;
-        lease.valid_time_sec = a.valid_lifetime;
-    }
-    if let Some(DhcpOption::IAAddr(a)) = opts.get(v6::OptionCode::IAAddr) {
-        lease.addr = a.addr;
-        lease.preferred_time_sec = a.preferred_life;
-        lease.valid_time_sec = a.valid_life;
-        lease.prefix_len = 128
     }
 }
 
 impl DhcpV6Lease {
-    /// Return the raw data of specified DHCP option containing
-    /// leading code and length(if available) also.
+    /// Return the raw data of specified DHCP option without
+    /// leading code and length(if available).
     /// Since DHCPv6 allows multiple DHCP option for each code,
     /// the return data is array of u8 array.
-    pub fn get_option_raw(&self, code: u16) -> Option<&[Vec<u8>]> {
+    pub fn get_option_raw(&self, code: u16) -> Option<Vec<Vec<u8>>> {
         self.dhcp_opts.get_data_raw(code)
+    }
+
+    pub(crate) fn new_from_msg(msg: &DhcpV6Message) -> Result<Self, DhcpError> {
+        let mut ret = Self {
+            xid: msg.xid(),
+            dhcp_opts: msg.options.clone(),
+            ..Default::default()
+        };
+        if let Some(DhcpV6Option::ClientId(v)) =
+            msg.options.get_first(DhcpV6OptionCode::ClientId)
+        {
+            ret.cli_duid = v.clone();
+        }
+        if let Some(DhcpV6Option::ServerId(v)) =
+            msg.options.get_first(DhcpV6OptionCode::ServerId)
+        {
+            ret.srv_duid = v.clone();
+        }
+        if let Some(DhcpV6Option::IANA(v)) =
+            msg.options.get_first(DhcpV6OptionCode::IANA)
+        {
+            ret.ia_type = Some(DhcpV6IaType::NonTemporaryAddresses);
+            // RFC 8415: In a typical deployment, the server will grant
+            // one address for each IA_NA option.
+            // So we only take first address
+            if v.address.is_success() {
+                ret.addr = v.address.addr;
+                ret.preferred_time_sec = v.address.preferred_time_sec;
+                ret.valid_time_sec = v.address.valid_time_sec;
+                ret.iaid = v.iaid;
+                ret.t1_sec = v.t1_sec;
+                ret.t2_sec = v.t2_sec;
+            } else if let Some(status) = v.address.status.as_ref() {
+                // When not success, it should always has a status code
+                // option
+                log::info!(
+                    "Lease not successful for IANA in DHCPv6 message: code \
+                     {}, message {}",
+                    status.status,
+                    status.message
+                );
+            }
+        }
+        if let Some(DhcpV6Option::IATA(v)) =
+            msg.options.get_first(DhcpV6OptionCode::IATA)
+        {
+            ret.ia_type = Some(DhcpV6IaType::TemporaryAddresses);
+            if v.address.is_success() {
+                ret.addr = v.address.addr;
+                ret.preferred_time_sec =
+                    TEMP_PREFERRED_LIFETIME.as_secs() as u32;
+                ret.valid_time_sec = TEMP_VALID_LIFETIME.as_secs() as u32;
+                ret.iaid = v.iaid;
+            } else if let Some(status) = v.address.status.as_ref() {
+                // When not success, it should always has a status code
+                // option
+                log::info!(
+                    "Lease not successful for IATA in DHCPv6 message: code \
+                     {}, message {}",
+                    status.status,
+                    status.message
+                );
+            }
+        }
+        if let Some(DhcpV6Option::IAPD(v)) =
+            msg.options.get_first(DhcpV6OptionCode::IAPD)
+        {
+            ret.ia_type = Some(DhcpV6IaType::PrefixDelegation);
+            if v.prefix.is_success() {
+                ret.iaid = v.iaid;
+                ret.t1_sec = v.t1_sec;
+                ret.t2_sec = v.t2_sec;
+                ret.addr = v.prefix.prefix;
+                ret.preferred_time_sec = v.prefix.preferred_time_sec;
+                ret.valid_time_sec = v.prefix.valid_time_sec;
+                ret.prefix_len = v.prefix.prefix_len;
+            } else if let Some(status) = v.prefix.status.as_ref() {
+                // When not success, it should always has a status code
+                // option
+                log::info!(
+                    "Lease not successful for IAPD in DHCPv6 message: code \
+                     {}, message {}",
+                    status.status,
+                    status.message
+                );
+            }
+        }
+        if let Some(DhcpV6Option::ServerUnicast(srv_ip)) =
+            msg.options.get_first(DhcpV6OptionCode::ServerUnicast)
+        {
+            ret.srv_ip = *srv_ip;
+        }
+        if let Some(DhcpV6Option::StatusCode(v)) =
+            msg.options.get_first(DhcpV6OptionCode::StatusCode)
+        {
+            if !v.is_success() {
+                return Err(DhcpError::new(
+                    ErrorKind::NoLease,
+                    format!(
+                        "DHCP server reply status code {}, message {}",
+                        v.status, v.message
+                    ),
+                ));
+            }
+        }
+        ret.validate_lease()?;
+        Ok(ret)
+    }
+
+    fn validate_lease(&self) -> Result<(), DhcpError> {
+        if self.t1_sec > self.t2_sec {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                format!(
+                    "DHCPv6 lease contains T1({} secs) bigger than T2 ({} \
+                     secs)",
+                    self.t1_sec, self.t2_sec
+                ),
+            ));
+        }
+
+        if self.t2_sec > self.valid_time_sec {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                format!(
+                    "DHCPv6 lease contains T2({} secs) bigger than valid ({} \
+                     secs)",
+                    self.t2_sec, self.valid_time_sec
+                ),
+            ));
+        }
+
+        if self.preferred_time_sec > self.valid_time_sec {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                format!(
+                    "DHCPv6 lease contains preferred ({} secs) bigger than \
+                     valid ({} secs)",
+                    self.preferred_time_sec, self.valid_time_sec
+                ),
+            ));
+        }
+
+        if self.srv_duid.is_empty() {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                "DHCPv6 lease contains empty server DUID".to_string(),
+            ));
+        }
+        if self.addr == Ipv6Addr::UNSPECIFIED {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                "DHCPv6 lease contains invalid all zero lease IPv6 address"
+                    .to_string(),
+            ));
+        }
+        Ok(())
     }
 }

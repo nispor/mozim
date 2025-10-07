@@ -24,6 +24,8 @@ use super::{
 use crate::{DhcpError, DhcpV4Config, DhcpV4Lease, ErrorKind, ETH_ALEN};
 
 const PACKET_HOST: u8 = 0; // a packet addressed to the local host
+pub(crate) const SERVER_PORT: u16 = 67;
+pub(crate) const CLIENT_PORT: u16 = 68;
 
 pub(crate) trait DhcpV4Socket {
     fn recv(&self) -> impl Future<Output = Result<Vec<u8>, DhcpError>> + Send;
@@ -46,9 +48,17 @@ pub(crate) trait DhcpV4Socket {
             let buffer: Vec<u8> = self.recv().await?;
             log::trace!("Received DHCP reply {buffer:?}");
             let reply_dhcp_msg = if self.is_raw() {
-                DhcpV4Message::from_eth_packet(&buffer)?
+                DhcpV4Message::parse_eth_packet(&buffer)?
             } else {
-                DhcpV4Message::from_dhcp_packet(&buffer)?
+                DhcpV4Message::parse(&buffer)?
+            };
+            let message_type = if let Some(t) = reply_dhcp_msg.message_type() {
+                t
+            } else {
+                log::debug!(
+                    "Dropping DHCP message due to missing message type option"
+                );
+                return Ok(None);
             };
             if reply_dhcp_msg.xid != xid {
                 log::debug!(
@@ -59,16 +69,14 @@ pub(crate) trait DhcpV4Socket {
                 );
                 return Ok(None);
             }
-            if reply_dhcp_msg.msg_type != expected {
+            if message_type != expected {
                 log::debug!(
                     "Dropping DHCP message due to type miss-match. Expecting \
-                     {}, got {}",
-                    expected,
-                    reply_dhcp_msg.msg_type
+                     {expected}, got {message_type}",
                 );
                 return Ok(None);
             }
-            if let Some(lease) = reply_dhcp_msg.lease {
+            if let Some(lease) = reply_dhcp_msg.lease() {
                 Ok(Some(lease))
             } else {
                 log::debug!(
@@ -235,13 +243,12 @@ impl DhcpUdpV4Socket {
     ) -> Result<Self, DhcpError> {
         log::debug!(
             "Creating UDP socket from {src_ip}:{} to {dst_ip}:{}",
-            dhcproto::v4::CLIENT_PORT,
-            dhcproto::v4::SERVER_PORT
+            CLIENT_PORT,
+            SERVER_PORT
         );
-        let socket =
-            UdpSocket::bind((src_ip, dhcproto::v4::CLIENT_PORT)).await?;
+        let socket = UdpSocket::bind((src_ip, CLIENT_PORT)).await?;
         bind_socket_to_iface(socket.as_raw_fd(), iface_name)?;
-        socket.connect((dst_ip, dhcproto::v4::SERVER_PORT)).await?;
+        socket.connect((dst_ip, SERVER_PORT)).await?;
         log::debug!("Finished UDP socket creation");
 
         Ok(Self { socket })

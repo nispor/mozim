@@ -38,6 +38,7 @@ sudo ip netns exec mozim dnsmasq \
     --dhcp-option=option:mtu,1492 \
     --dhcp-option=option:domain-name,example.com\
     --dhcp-option=option:ntp-server,${DHCP_SRV_IP} \
+    --dhcp-option="option6:ntp-server,ntp-a.example.com,ntp-b.example.com" \
     --dhcp-option=121,203.0.113.0/24,${IPV4_BLOCK}.40 \
     --dhcp-option=249,203.0.113.0/24,${IPV4_BLOCK}.40 \
     --keep-in-foreground \

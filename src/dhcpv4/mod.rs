@@ -16,10 +16,14 @@ mod state;
 mod time;
 
 pub use self::{
-    client::DhcpV4Client, config::DhcpV4Config, lease::DhcpV4Lease,
-    option::DhcpV4ClasslessRoute, state::DhcpV4State,
+    client::DhcpV4Client,
+    config::DhcpV4Config,
+    lease::DhcpV4Lease,
+    msg::DhcpV4MessageType,
+    option::{
+        DhcpV4ClasslessRoute, DhcpV4Option, DhcpV4OptionCode,
+        DhcpV4OptionUnknown,
+    },
+    state::DhcpV4State,
 };
-pub(crate) use self::{
-    msg::{DhcpV4Message, DhcpV4MessageType},
-    socket::DhcpV4Socket,
-};
+pub(crate) use self::{msg::DhcpV4Message, socket::DhcpV4Socket};

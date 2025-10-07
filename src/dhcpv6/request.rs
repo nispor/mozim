@@ -5,9 +5,9 @@ use std::time::{Duration, Instant};
 use super::{
     msg::{DhcpV6Message, DhcpV6MessageType},
     time::gen_retransmit_time,
-    DhcpV6State,
+    DhcpV6Config, DhcpV6Lease, DhcpV6State,
 };
-use crate::{DhcpError, DhcpV6Client, ErrorKind};
+use crate::{DhcpError, DhcpV6Client, DhcpV6Option, ErrorKind};
 
 // RFC 8415 section 7.6 Transmission and Retransmission Parameters
 const REQ_TIMEOUT: Duration = Duration::from_secs(1);
@@ -30,6 +30,7 @@ impl DhcpV6Client {
     pub(crate) async fn request(&mut self) -> Result<(), DhcpError> {
         if self.retransmit_count == 0 {
             self.trans_begin_time = Instant::now();
+            self.regen_xid();
         }
 
         loop {
@@ -73,42 +74,37 @@ impl DhcpV6Client {
     async fn _request(&mut self) -> Result<(), DhcpError> {
         self.state = DhcpV6State::Request;
         self.lease = None;
-        let mut dhcp_packet = DhcpV6Message::new(
-            self.config.mode,
-            self.config.duid.clone(),
-            DhcpV6MessageType::REQUEST,
-            self.xid,
-        );
         let xid = self.xid;
-        if let Some(pending_lease) = self.pending_lease.as_ref() {
-            dhcp_packet.load_lease(pending_lease.clone())?;
+        let pending_lease = if let Some(l) = self.pending_lease.as_ref() {
+            l
         } else {
             return Err(DhcpError::new(
                 ErrorKind::Bug,
                 format!("No pending lease for DhcpV6State::Request {self:?}"),
             ));
-        }
-
-        dhcp_packet.add_elapsed_time(self.trans_begin_time);
-
+        };
+        let dhcp_packet = new_request_msg(
+            self.xid,
+            &self.config,
+            &self.trans_begin_time,
+            pending_lease,
+        );
         let udp_socket = self.get_udp_socket_or_init().await?;
 
-        log::debug!("Sending Solicit");
-        log::trace!("Sending Solicit {dhcp_packet:?}");
+        log::debug!("Sending Request");
+        log::trace!("Sending Request {dhcp_packet:?}");
 
         // TODO(Gris Ge): OPTION_UNICAST
         //      For Request, Renew, Information-request, Release, and Decline
         //      messages, it is allowed only if the Server Unicast option is
         //      configured.
-        udp_socket
-            .send_multicast(&dhcp_packet.to_dhcp_packet()?)
-            .await?;
+        udp_socket.send_multicast(&dhcp_packet.emit()).await?;
         log::debug!("Waiting server reply with Advertise");
         // Make sure we wait all reply from DHCP server instead of
         // failing on first DHCP invalid reply
         loop {
             match udp_socket
-                .recv_dhcp_lease(DhcpV6MessageType::REPLY, xid)
+                .recv_dhcp_lease(DhcpV6MessageType::Reply, xid)
                 .await
             {
                 Ok(Some(l)) => {
@@ -122,4 +118,24 @@ impl DhcpV6Client {
             };
         }
     }
+}
+
+fn new_request_msg(
+    xid: u32,
+    config: &DhcpV6Config,
+    trans_begin_time: &Instant,
+    lease: &DhcpV6Lease,
+) -> DhcpV6Message {
+    let mut ret = DhcpV6Message::new(
+        DhcpV6MessageType::Request,
+        xid,
+        &config.duid,
+        trans_begin_time,
+    );
+    ret.options.insert(DhcpV6Option::OptionRequestOption(
+        config.request_opts.clone(),
+    ));
+    ret.load_lease(lease);
+
+    ret
 }

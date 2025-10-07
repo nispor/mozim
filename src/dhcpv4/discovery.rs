@@ -64,11 +64,7 @@ impl DhcpV4Client {
     async fn _discovery(&mut self) -> Result<(), DhcpError> {
         self.state = DhcpV4State::InitReboot;
         self.lease = None;
-        let dhcp_msg = DhcpV4Message::new(
-            &self.config,
-            DhcpV4MessageType::Discovery,
-            self.xid,
-        );
+        let dhcp_msg = DhcpV4Message::new_discovery(self.xid, &self.config);
         let xid = self.xid;
         let raw_socket = self.get_raw_socket_or_init().await?;
 

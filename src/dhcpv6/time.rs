@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::{DhcpError, DhcpTimer, DhcpV6Client, DhcpV6Lease};
+use crate::{DhcpError, DhcpTimer, DhcpV6Client, DhcpV6Lease, DhcpV6Mode};
 
 // RFC 8415 section 15.  Reliability of Client-Initiated Message Exchanges
 //  RT      Retransmission timeout
@@ -57,7 +57,7 @@ impl DhcpV6Client {
         &mut self,
         lease: &DhcpV6Lease,
     ) -> Result<(), DhcpError> {
-        if !self.config.mode.is_temp_addr() {
+        if self.config.mode != DhcpV6Mode::TemporaryAddresses {
             log::info!("Setting timer for T1: {} seconds", lease.t1_sec);
             log::info!("Setting timer for T2: {} seconds", lease.t2_sec);
             self.t1_timer =

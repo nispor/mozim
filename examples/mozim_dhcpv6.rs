@@ -8,8 +8,8 @@ const TEST_NIC: &str = "dhcpcli";
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     enable_log();
     let mut config =
-        DhcpV6Config::new(TEST_NIC, DhcpV6Mode::new_non_temp_addr());
-    config.set_timeout_sec(1);
+        DhcpV6Config::new(TEST_NIC, DhcpV6Mode::NonTemporaryAddresses);
+    config.set_timeout_sec(10);
     let mut cli = DhcpV6Client::init(config, None).await.unwrap();
     let mut got_lease = None;
 

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use super::{
     msg::{DhcpV6Message, DhcpV6MessageType},
     time::gen_retransmit_time,
-    DhcpV6State,
+    DhcpV6Config, DhcpV6Lease, DhcpV6Option, DhcpV6OptionCode, DhcpV6State,
 };
 use crate::{DhcpError, DhcpV6Client, ErrorKind};
 
@@ -52,6 +52,7 @@ impl DhcpV6Client {
     pub(crate) async fn rebind(&mut self) -> Result<(), DhcpError> {
         if self.retransmit_count == 0 {
             self.trans_begin_time = Instant::now();
+            self.regen_xid();
         }
 
         loop {
@@ -102,31 +103,26 @@ impl DhcpV6Client {
                 format!("In Rebind state without lease: {self:?}"),
             ));
         };
-        let mut dhcp_packet = DhcpV6Message::new(
-            self.config.mode,
-            self.config.duid.clone(),
-            DhcpV6MessageType::REBIND,
+        let dhcp_msg = new_rebind_msg(
             self.xid,
+            &self.config,
+            &self.trans_begin_time,
+            lease,
         );
         let xid = self.xid;
-        dhcp_packet.load_lease(lease.clone())?;
-
-        dhcp_packet.add_elapsed_time(self.trans_begin_time);
 
         let udp_socket = self.get_udp_socket_or_init().await?;
 
         log::debug!("Sending Rebind");
-        log::trace!("Sending Rebind {dhcp_packet:?}");
+        log::trace!("Sending Rebind {dhcp_msg:?}");
 
-        udp_socket
-            .send_multicast(&dhcp_packet.to_dhcp_packet()?)
-            .await?;
+        udp_socket.send_multicast(&dhcp_msg.emit()).await?;
         log::debug!("Waiting server reply with Reply");
         // Make sure we wait all reply from DHCP server instead of
         // failing on first DHCP invalid reply
         loop {
             match udp_socket
-                .recv_dhcp_lease(DhcpV6MessageType::REPLY, xid)
+                .recv_dhcp_lease(DhcpV6MessageType::Reply, xid)
                 .await
             {
                 Ok(Some(l)) => {
@@ -140,4 +136,25 @@ impl DhcpV6Client {
             };
         }
     }
+}
+
+fn new_rebind_msg(
+    xid: u32,
+    config: &DhcpV6Config,
+    trans_begin_time: &Instant,
+    lease: &DhcpV6Lease,
+) -> DhcpV6Message {
+    let mut ret = DhcpV6Message::new(
+        DhcpV6MessageType::Rebind,
+        xid,
+        &config.duid,
+        trans_begin_time,
+    );
+    ret.options.insert(DhcpV6Option::OptionRequestOption(
+        config.request_opts.clone(),
+    ));
+    ret.load_lease(lease);
+    ret.options.remove(DhcpV6OptionCode::ServerId);
+
+    ret
 }

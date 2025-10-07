@@ -26,7 +26,7 @@ fn test_dhcpv6() {
 
 async fn get_lease() -> Option<DhcpV6Lease> {
     let config =
-        DhcpV6Config::new(TEST_NIC_CLI, DhcpV6Mode::new_non_temp_addr());
+        DhcpV6Config::new(TEST_NIC_CLI, DhcpV6Mode::NonTemporaryAddresses);
     let mut cli = DhcpV6Client::init(config, None).await.unwrap();
 
     while let Ok(state) = cli.run().await {
