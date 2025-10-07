@@ -4,7 +4,7 @@ use crate::DhcpV4Lease;
 
 /// DHCPv4 Client State
 /// RFC 2131 Table 4: Client messages from different states
-#[derive(Debug, PartialEq, Clone, Eq, Default)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub enum DhcpV4State {
     /// DHCP lease acquired, waiting T1/T2 to refresh the lease
     Done(Box<DhcpV4Lease>),

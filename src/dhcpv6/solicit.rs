@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::time::{Duration, Instant};
+use std::{
+    net::Ipv6Addr,
+    time::{Duration, Instant},
+};
 
 use super::{
     msg::{DhcpV6Message, DhcpV6MessageType},
     time::gen_retransmit_time,
-    DhcpV6State,
+    DhcpV6Config, DhcpV6State,
 };
-use crate::{DhcpError, DhcpV6Client, ErrorKind};
+use crate::{
+    DhcpError, DhcpV6Client, DhcpV6Mode, DhcpV6Option, DhcpV6OptionIaPd,
+    ErrorKind,
+};
 
 // RFC 8415 section 7.6 Transmission and Retransmission Parameters
 const SOL_MAX_DELAY_MS: u64 = 1000; // SOL_MAX_DELAY in milliseconds
@@ -86,25 +92,15 @@ impl DhcpV6Client {
     async fn _solicit(&mut self) -> Result<(), DhcpError> {
         self.state = DhcpV6State::Solicit;
         self.lease = None;
-        let mut dhcp_packet = DhcpV6Message::new(
-            self.config.mode,
-            self.config.duid.clone(),
-            DhcpV6MessageType::SOLICIT,
-            self.xid,
-        );
-
+        let dhcp_packet =
+            new_solicit_msg(self.xid, &self.config, &self.trans_begin_time);
         let xid = self.xid;
-
-        dhcp_packet.add_elapsed_time(self.trans_begin_time);
-
         let udp_socket = self.get_udp_socket_or_init().await?;
 
         log::debug!("Sending Solicit");
         log::trace!("Sending Solicit {dhcp_packet:?}");
 
-        udp_socket
-            .send_multicast(&dhcp_packet.to_dhcp_packet()?)
-            .await?;
+        udp_socket.send_multicast(&dhcp_packet.emit()).await?;
         log::debug!("Waiting server reply with Advertise");
         // Make sure we wait all reply from DHCP server instead of
         // failing on first DHCP invalid reply
@@ -113,7 +109,7 @@ impl DhcpV6Client {
             // `OPTION_RAPID_COMMIT`. Since we never set so, it is OK to assume
             // server only reply with Advertise.
             match udp_socket
-                .recv_dhcp_lease(DhcpV6MessageType::ADVERTISE, xid)
+                .recv_dhcp_lease(DhcpV6MessageType::Advertise, xid)
                 .await
             {
                 Ok(Some(l)) => {
@@ -135,4 +131,36 @@ impl DhcpV6Client {
             };
         }
     }
+}
+
+fn new_solicit_msg(
+    xid: u32,
+    config: &DhcpV6Config,
+    trans_begin_time: &Instant,
+) -> DhcpV6Message {
+    let mut ret = DhcpV6Message::new(
+        DhcpV6MessageType::Solicit,
+        xid,
+        &config.duid,
+        trans_begin_time,
+    );
+    ret.options.insert(DhcpV6Option::OptionRequestOption(
+        config.request_opts.clone(),
+    ));
+    match config.mode {
+        DhcpV6Mode::NonTemporaryAddresses => {
+            ret.options.insert(DhcpV6Option::IANA(Default::default()))
+        }
+        DhcpV6Mode::TemporaryAddresses => {
+            ret.options.insert(DhcpV6Option::IATA(Default::default()));
+        }
+        DhcpV6Mode::PrefixDelegation(prefix_len_hint) => {
+            ret.options.insert(DhcpV6Option::IAPD(DhcpV6OptionIaPd::new(
+                Ipv6Addr::UNSPECIFIED,
+                prefix_len_hint,
+            )));
+        }
+    }
+
+    ret
 }

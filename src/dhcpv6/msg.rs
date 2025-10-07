@@ -1,43 +1,36 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{net::Ipv6Addr, time::Instant};
+use std::time::Instant;
 
-use dhcproto::{
-    v6,
-    v6::{DhcpOption, DhcpOptions, OptionCode},
-    Decodable, Decoder, Encodable,
-};
-
+use super::option::DhcpV6Options;
 use crate::{
-    DhcpError, DhcpV6Duid, DhcpV6IaType, DhcpV6Lease, DhcpV6Mode, ErrorKind,
+    buffer::{Buffer, BufferMut},
+    DhcpError, DhcpV6Duid, DhcpV6IaType, DhcpV6Lease, DhcpV6Option,
+    DhcpV6OptionIaAddr, DhcpV6OptionIaNa, DhcpV6OptionIaPd, DhcpV6OptionIaTa,
+    ErrorContext, ErrorKind,
 };
 
-const DEFAULT_IAID: u32 = 0;
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub(crate) struct DhcpV6MessageType(v6::MessageType);
-
-impl DhcpV6MessageType {
-    pub(crate) const SOLICIT: Self =
-        DhcpV6MessageType(v6::MessageType::Solicit);
-
-    pub(crate) const ADVERTISE: Self =
-        DhcpV6MessageType(v6::MessageType::Advertise);
-
-    pub(crate) const REQUEST: Self =
-        DhcpV6MessageType(v6::MessageType::Request);
-
-    pub(crate) const REPLY: Self = DhcpV6MessageType(v6::MessageType::Reply);
-    pub(crate) const RENEW: Self = DhcpV6MessageType(v6::MessageType::Renew);
-    pub(crate) const REBIND: Self = DhcpV6MessageType(v6::MessageType::Rebind);
-    pub(crate) const RELEASE: Self =
-        DhcpV6MessageType(v6::MessageType::Release);
-}
-
-impl Default for DhcpV6MessageType {
-    fn default() -> Self {
-        Self(v6::MessageType::Unknown(0))
-    }
+/// DHCPv6 Message Type
+///
+/// Defined by RFC 8415 - 7.3. DHCP Message Types
+#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub(crate) enum DhcpV6MessageType {
+    #[default]
+    Solicit = 1,
+    Advertise = 2,
+    Request = 3,
+    Confirm = 4,
+    Renew = 5,
+    Rebind = 6,
+    Reply = 7,
+    Release = 8,
+    Decline = 9,
+    Reconfigure = 10,
+    InformationRequest = 11,
+    RelayForward = 12,
+    RelayReply = 13,
 }
 
 impl std::fmt::Display for DhcpV6MessageType {
@@ -45,291 +38,160 @@ impl std::fmt::Display for DhcpV6MessageType {
         write!(
             f,
             "{:?}",
-            match self.0 {
-                v6::MessageType::Solicit => "solicit",
-                v6::MessageType::Advertise => "advertise",
-                v6::MessageType::Request => "request",
-                v6::MessageType::Confirm => "confirm",
-                v6::MessageType::Decline => "decline",
-                v6::MessageType::Renew => "renew",
-                v6::MessageType::Rebind => "rebind",
-                v6::MessageType::Release => "release",
-                v6::MessageType::Reply => "reply",
-                _ => {
-                    log::warn!("Got unknown message type {:?}", self.0);
-                    "unknown"
-                }
+            match self {
+                DhcpV6MessageType::Solicit => "Solicit",
+                DhcpV6MessageType::Advertise => "Advertise",
+                DhcpV6MessageType::Request => "Request",
+                DhcpV6MessageType::Confirm => "Confirm",
+                DhcpV6MessageType::Renew => "Renew",
+                DhcpV6MessageType::Rebind => "Rebind",
+                DhcpV6MessageType::Reply => "Reply",
+                DhcpV6MessageType::Release => "Release",
+                DhcpV6MessageType::Decline => "Decline",
+                DhcpV6MessageType::Reconfigure => "Reconfigure",
+                DhcpV6MessageType::InformationRequest => "Information-request",
+                DhcpV6MessageType::RelayForward => "Relay-forward",
+                DhcpV6MessageType::RelayReply => "Relay-reply",
             }
         )
     }
 }
 
-impl From<DhcpV6MessageType> for v6::MessageType {
-    fn from(v: DhcpV6MessageType) -> Self {
-        v.0
+impl From<DhcpV6MessageType> for u8 {
+    fn from(v: DhcpV6MessageType) -> u8 {
+        v as u8
     }
 }
 
-impl From<v6::MessageType> for DhcpV6MessageType {
-    fn from(v: v6::MessageType) -> Self {
-        Self(v)
+impl std::convert::TryFrom<u8> for DhcpV6MessageType {
+    type Error = DhcpError;
+
+    fn try_from(d: u8) -> Result<Self, DhcpError> {
+        match d {
+            d if d == Self::Solicit as u8 => Ok(Self::Solicit),
+            d if d == Self::Advertise as u8 => Ok(Self::Advertise),
+            d if d == Self::Request as u8 => Ok(Self::Request),
+            d if d == Self::Confirm as u8 => Ok(Self::Confirm),
+            d if d == Self::Renew as u8 => Ok(Self::Renew),
+            d if d == Self::Rebind as u8 => Ok(Self::Rebind),
+            d if d == Self::Reply as u8 => Ok(Self::Reply),
+            d if d == Self::Release as u8 => Ok(Self::Release),
+            d if d == Self::Decline as u8 => Ok(Self::Decline),
+            d if d == Self::Reconfigure as u8 => Ok(Self::Reconfigure),
+            d if d == Self::InformationRequest as u8 => {
+                Ok(Self::InformationRequest)
+            }
+            d if d == Self::RelayForward as u8 => Ok(Self::RelayForward),
+            d if d == Self::RelayReply as u8 => Ok(Self::RelayReply),
+            _ => Err(DhcpError::new(
+                ErrorKind::NotSupported,
+                format!("DHCPv6 message type {d} is not supported"),
+            )),
+        }
     }
 }
+
+const DHCPV6_TRANSACTION_ID_LEN: usize = 3;
 
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 #[non_exhaustive]
-pub struct DhcpV6Message {
+pub(crate) struct DhcpV6Message {
     pub(crate) msg_type: DhcpV6MessageType,
-    pub(crate) lease: Option<DhcpV6Lease>,
-    pub(crate) mode: DhcpV6Mode,
-    pub(crate) duid: DhcpV6Duid,
-    pub(crate) xid: [u8; 3],
-    elapsed_time: u16,
+    pub(crate) xid: [u8; DHCPV6_TRANSACTION_ID_LEN],
+    pub(crate) options: DhcpV6Options,
 }
 
 impl DhcpV6Message {
     pub(crate) fn new(
-        mode: DhcpV6Mode,
-        duid: DhcpV6Duid,
         msg_type: DhcpV6MessageType,
-        xid: [u8; 3],
+        xid: u32,
+        duid: &DhcpV6Duid,
+        trans_begin_time: &Instant,
     ) -> Self {
-        Self {
+        let mut ret = Self {
             msg_type,
-            mode,
-            duid,
-            lease: None,
-            xid,
-            elapsed_time: 0,
+            xid: [0; DHCPV6_TRANSACTION_ID_LEN],
+            options: DhcpV6Options::new(),
+        };
+        ret.xid.copy_from_slice(&xid.to_be_bytes()[1..]);
+        ret.options.insert(DhcpV6Option::ElapsedTime(
+            trans_begin_time.elapsed().as_millis() as u16 / 10,
+        ));
+        ret.options.insert(DhcpV6Option::ClientId(duid.clone()));
+        ret
+    }
+
+    pub(crate) fn xid(&self) -> u32 {
+        let mut ret = [0u8; 4];
+        ret[1..].copy_from_slice(&self.xid);
+        u32::from_be_bytes(ret)
+    }
+
+    pub(crate) fn load_lease(&mut self, lease: &DhcpV6Lease) {
+        self.options
+            .insert(DhcpV6Option::ServerId(lease.srv_duid.clone()));
+
+        match lease.ia_type {
+            Some(DhcpV6IaType::NonTemporaryAddresses) => {
+                self.options
+                    .insert(DhcpV6Option::IANA(DhcpV6OptionIaNa::new(
+                        lease.iaid,
+                        lease.t1_sec,
+                        lease.t2_sec,
+                        DhcpV6OptionIaAddr::new(
+                            lease.addr,
+                            lease.preferred_time_sec,
+                            lease.valid_time_sec,
+                        ),
+                    )))
+            }
+            Some(DhcpV6IaType::TemporaryAddresses) => {
+                self.options
+                    .insert(DhcpV6Option::IATA(DhcpV6OptionIaTa::new(
+                        lease.iaid,
+                        DhcpV6OptionIaAddr::new(
+                            lease.addr,
+                            lease.preferred_time_sec,
+                            lease.valid_time_sec,
+                        ),
+                    )))
+            }
+            Some(DhcpV6IaType::PrefixDelegation) => {
+                self.options
+                    .insert(DhcpV6Option::IAPD(DhcpV6OptionIaPd::new(
+                        lease.addr,
+                        lease.prefix_len,
+                    )));
+            }
+            None => (),
         }
     }
 
-    pub(crate) fn load_lease(
-        &mut self,
-        lease: DhcpV6Lease,
-    ) -> Result<(), DhcpError> {
-        validate_lease(self.mode, &lease)?;
-        self.lease = Some(lease);
-        Ok(())
-    }
+    pub(crate) fn parse(payload: &[u8]) -> Result<Self, DhcpError> {
+        let mut buf = Buffer::new(payload);
 
-    pub(crate) fn to_dhcp_packet(&self) -> Result<Vec<u8>, DhcpError> {
-        let mut dhcp_msg =
-            v6::Message::new_with_id(self.msg_type.into(), self.xid);
-
-        dhcp_msg
-            .opts_mut()
-            .insert(DhcpOption::ClientId(self.duid.to_vec()));
-
-        match self.mode {
-            DhcpV6Mode::Statefull(DhcpV6IaType::NonTemporaryAddresses) => {
-                dhcp_msg.opts_mut().insert(DhcpOption::IANA(v6::IANA {
-                    id: self
-                        .lease
-                        .as_ref()
-                        .map(|l| l.iaid)
-                        .unwrap_or(DEFAULT_IAID),
-                    // Required by RFC 8415 section 21.4
-                    t1: 0,
-                    // Required by RFC 8415 section 21.4
-                    t2: 0,
-                    opts: self
-                        .lease
-                        .as_ref()
-                        .map(gen_iaadr_dhcp_opt)
-                        .unwrap_or_default(),
-                }))
-            }
-            DhcpV6Mode::Statefull(DhcpV6IaType::TemporaryAddresses) => {
-                dhcp_msg.opts_mut().insert(DhcpOption::IATA(v6::IATA {
-                    id: self
-                        .lease
-                        .as_ref()
-                        .map(|l| l.iaid)
-                        .unwrap_or(DEFAULT_IAID),
-                    opts: self
-                        .lease
-                        .as_ref()
-                        .map(gen_iaadr_dhcp_opt)
-                        .unwrap_or_default(),
-                }))
-            }
-            DhcpV6Mode::Statefull(DhcpV6IaType::PrefixDelegation) => {
-                dhcp_msg.opts_mut().insert(DhcpOption::IAPD(v6::IAPD {
-                    id: self
-                        .lease
-                        .as_ref()
-                        .map(|l| l.iaid)
-                        .unwrap_or(DEFAULT_IAID),
-                    // Required by RFC 8415 section 21.21
-                    t1: 0,
-                    // Required by RFC 8415 section 21.21
-                    t2: 0,
-                    opts: self
-                        .lease
-                        .as_ref()
-                        .map(gen_iaadr_dhcp_opt)
-                        .unwrap_or_default(),
-                }))
-            }
-            DhcpV6Mode::Stateless => {
-                return Err(DhcpError::new(
-                    ErrorKind::NotSupported,
-                    "Stateless DHCPv6 is not supported yet".to_string(),
-                ));
-            }
-        }
-
-        match self.msg_type {
-            DhcpV6MessageType::SOLICIT => {
-                // RFC 8415: 18.2.1. Creation and Transmission of Solicit
-                // Messages:
-                //      The client MUST include an Option Request option (ORO)
-                //      (see Section 21.7) to request the SOL_MAX_RT option
-                //      (see Section 21.24) and any other options the client is
-                //      interested in receiving.
-                dhcp_msg.opts_mut().insert(DhcpOption::ORO(v6::ORO {
-                    opts: vec![OptionCode::SolMaxRt],
-                }));
-                // TODO(Gris Ge): Insert hint on our value SOL_MAX_RT
-            }
-            DhcpV6MessageType::REBIND => (),
-            DhcpV6MessageType::REQUEST
-            | DhcpV6MessageType::RENEW
-            | DhcpV6MessageType::RELEASE => {
-                if let Some(lease) = self.lease.as_ref() {
-                    dhcp_msg
-                        .opts_mut()
-                        .insert(DhcpOption::ServerId(lease.srv_duid.clone()));
-                } else {
-                    return Err(DhcpError::new(
-                        ErrorKind::InvalidArgument,
-                        "No DHCP lease found for DHCP request, please run \
-                         DhcpV6Message::load_lease() first"
-                            .to_string(),
-                    ));
-                }
-            }
-            _ => {
-                log::error!(
-                    "BUG: Invalid DhcpV6MessageType {:?}",
-                    self.msg_type
-                );
-            }
-        }
-
-        if self.elapsed_time > 0 {
-            dhcp_msg
-                .opts_mut()
-                .insert(DhcpOption::ElapsedTime(self.elapsed_time));
-        }
-
-        let mut dhcp_msg_buff = Vec::new();
-        let mut e = v6::Encoder::new(&mut dhcp_msg_buff);
-        dhcp_msg.encode(&mut e)?;
-        Ok(dhcp_msg_buff)
-    }
-
-    pub(crate) fn from_dhcp_packet(payload: &[u8]) -> Result<Self, DhcpError> {
-        let v6_dhcp_msg = v6::Message::decode(&mut Decoder::new(payload))
-            .map_err(|decode_error| {
-                let e = DhcpError::new(
-                    ErrorKind::InvalidDhcpServerReply,
-                    format!(
-                        "Failed to parse DHCPv6 message from payload of \
-                         packet {payload:?}: {decode_error}"
-                    ),
-                );
-                log::error!("{e}");
-                e
-            })?;
-
-        let ret = Self {
-            lease: Some(DhcpV6Lease::try_from(&v6_dhcp_msg)?),
-            msg_type: v6_dhcp_msg.msg_type().into(),
-            xid: v6_dhcp_msg.xid(),
+        let mut ret = Self {
+            msg_type: buf
+                .get_u8()
+                .context("Invalid DHCPv6 message type")?
+                .try_into()?,
             ..Default::default()
         };
+
+        ret.xid.copy_from_slice(
+            buf.get_bytes(DHCPV6_TRANSACTION_ID_LEN)
+                .context("Invalid DHCPv6 message transaction-id")?,
+        );
+        ret.options = DhcpV6Options::parse(&mut buf)?;
         log::debug!("Got reply DHCP message {ret:?}");
         Ok(ret)
     }
 
-    pub(crate) fn add_elapsed_time(&mut self, trans_begin_time: Instant) {
-        self.elapsed_time =
-            match u16::try_from(trans_begin_time.elapsed().as_secs() / 100) {
-                Ok(i) => i,
-                Err(_) => u16::MAX,
-            };
+    pub(crate) fn emit(&self) -> Vec<u8> {
+        let mut buf = BufferMut::new(512);
+        buf.write_u8(self.msg_type.into());
+        buf.write_bytes(&self.xid);
+        self.options.emit(&mut buf);
+        buf.data
     }
-}
-
-fn validate_lease(
-    mode: DhcpV6Mode,
-    lease: &DhcpV6Lease,
-) -> Result<(), DhcpError> {
-    let ia_type = if let DhcpV6Mode::Statefull(i) = mode {
-        i
-    } else {
-        return Err(DhcpError::new(
-            ErrorKind::NotSupported,
-            "Stateless DHCPv6 is not supported yet".to_string(),
-        ));
-    };
-    if lease.ia_type != ia_type {
-        return Err(DhcpError::new(
-            ErrorKind::InvalidArgument,
-            format!(
-                "DHCPv6 lease contains different IA type({}) with config({}) \
-                 DhcpV6Message::load_lease() with correct lease",
-                lease.ia_type, ia_type
-            ),
-        ));
-    }
-    if lease.srv_duid.is_empty() {
-        return Err(DhcpError::new(
-            ErrorKind::InvalidArgument,
-            "DHCPv6 lease contains empty server DUID, please run \
-             DhcpV6Message::load_lease() with correct lease"
-                .to_string(),
-        ));
-    }
-    if lease.addr == Ipv6Addr::UNSPECIFIED {
-        return Err(DhcpError::new(
-            ErrorKind::InvalidArgument,
-            "DHCPv6 lease contains invalid all zero lease IPv6 address, \
-             please run DhcpV6Message::load_lease()
-            with correct lease"
-                .to_string(),
-        ));
-    }
-    Ok(())
-}
-
-fn gen_iaadr_dhcp_opt(lease: &DhcpV6Lease) -> DhcpOptions {
-    let mut ret = DhcpOptions::new();
-    match lease.ia_type {
-        DhcpV6IaType::TemporaryAddresses
-        | DhcpV6IaType::NonTemporaryAddresses => {
-            ret.insert(DhcpOption::IAAddr(v6::IAAddr {
-                addr: lease.addr,
-                // Set to 0 per RFC 8415 section 21.6
-                preferred_life: 0,
-                // Set to 0 per RFC 8415 section 21.6
-                valid_life: 0,
-                opts: DhcpOptions::new(),
-            }));
-        }
-        DhcpV6IaType::PrefixDelegation => {
-            ret.insert(DhcpOption::IAPrefix(v6::IAPrefix {
-                prefix_len: lease.prefix_len,
-                prefix_ip: lease.addr,
-                // Set to 0 per RFC 8415 section 21.6
-                preferred_lifetime: 0,
-                // Set to 0 per RFC 8415 section 21.6
-                valid_lifetime: 0,
-                opts: DhcpOptions::new(),
-            }));
-        }
-    }
-    ret
 }

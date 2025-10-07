@@ -13,19 +13,21 @@ path = "src/lib.rs"
 
 [dependencies]
 libc = "0.2.132"
-dhcproto = "0.13.0"
 log = "0.4.17"
 etherparse = "0.19.0"
 nix = { version = "0.30", features = ["poll", "time", "event", "socket", "fs"] }
 rtnetlink = { version = "0.18.0", optional = true }
-ipnet = "2.11.0"
 tokio = { version = "1.19", features = ["macros", "rt", "net", "time"] }
-futures = "0.3"
+
+[dependencies.futures]
+version = "0.3"
+default-features = false
+features = ["std"]
 
 [dependencies.rand]
 version = "0.9"
 default-features = false
-features = ["std", "std_rng"]
+features = ["std", "std_rng", "thread_rng"]
 
 [features]
 default = ["netlink"]

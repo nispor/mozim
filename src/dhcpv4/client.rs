@@ -2,7 +2,7 @@
 
 use super::{
     socket::{DhcpRawSocket, DhcpUdpV4Socket, DhcpV4Socket},
-    DhcpV4Message, DhcpV4MessageType,
+    DhcpV4Message,
 };
 use crate::{
     DhcpError, DhcpTimer, DhcpV4Config, DhcpV4Lease, DhcpV4State, ErrorKind,
@@ -132,16 +132,12 @@ impl DhcpV4Client {
         &mut self,
         lease: &DhcpV4Lease,
     ) -> Result<(), DhcpError> {
-        let mut dhcp_msg = DhcpV4Message::new(
-            &self.config,
-            DhcpV4MessageType::Release,
-            self.xid,
-        );
-        dhcp_msg.load_lease(lease.clone());
+        let dhcp_msg =
+            DhcpV4Message::new_release(self.xid, &self.config, lease);
         if self.config.is_proxy {
             self.get_raw_socket_or_init()
                 .await?
-                .send(&dhcp_msg.to_proxy_eth_packet_unicast()?)
+                .send(&dhcp_msg.to_proxy_eth_packet_unicast(lease)?)
                 .await?;
         } else {
             // Cannot create UDP socket when interface does not have DHCP IP
@@ -157,7 +153,7 @@ impl DhcpV4Client {
                     );
                     self.get_raw_socket_or_init()
                         .await?
-                        .send(&dhcp_msg.to_proxy_eth_packet_unicast()?)
+                        .send(&dhcp_msg.to_proxy_eth_packet_unicast(lease)?)
                         .await?;
                 }
             }

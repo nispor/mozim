@@ -98,13 +98,7 @@ impl DhcpV4Client {
                 return Ok(());
             }
         };
-        let mut dhcp_msg = DhcpV4Message::new(
-            &self.config,
-            DhcpV4MessageType::Request,
-            self.xid,
-        );
-        dhcp_msg.load_lease(lease.clone());
-        dhcp_msg.renew_or_rebind(true);
+        let dhcp_msg = DhcpV4Message::new_renew(self.xid, &self.config, lease);
         let xid = self.xid;
         let udp_socket = self.get_udp_socket_or_init().await?;
 

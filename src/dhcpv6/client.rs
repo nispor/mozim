@@ -7,7 +7,8 @@ use super::{
     socket::DhcpUdpV6Socket,
 };
 use crate::{
-    DhcpError, DhcpTimer, DhcpV6Config, DhcpV6Lease, DhcpV6State, ErrorKind,
+    DhcpError, DhcpTimer, DhcpV6Config, DhcpV6Lease, DhcpV6Mode, DhcpV6State,
+    ErrorKind,
 };
 
 /// DHCPv6 Client
@@ -21,7 +22,7 @@ use crate::{
 /// #[tokio::main(flavor = "current_thread")]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let config = mozim::DhcpV6Config::new(
-///         "eth1", mozim::DhcpV6Mode::new_non_temp_addr());
+///         "eth1", mozim::DhcpV6Mode::NonTemporaryAddresses);
 ///     let mut cli = mozim::DhcpV6Client::init(config, None).await.unwrap();
 ///
 ///     loop {
@@ -38,7 +39,7 @@ pub struct DhcpV6Client {
     pub(crate) config: DhcpV6Config,
     pub(crate) lease: Option<DhcpV6Lease>,
     pub(crate) state: DhcpV6State,
-    pub(crate) xid: [u8; 3],
+    pub(crate) xid: u32,
     pub(crate) pending_lease: Option<DhcpV6Lease>,
     pub(crate) udp_socket: Option<DhcpUdpV6Socket>,
     pub(crate) retransmit_count: u32,
@@ -79,15 +80,12 @@ impl DhcpV6Client {
             DhcpV6State::Solicit
         };
 
-        // In RFC 8415, the `transaction-id` is a 3-octet field
-        let mut xid: [u8; 3] = [0; 3];
-        xid.copy_from_slice(&rand::random::<u32>().to_le_bytes()[..3]);
-
         Ok(Self {
             config,
             lease,
             state,
-            xid,
+            // In RFC 8415, the `transaction-id` is a 3-octet field
+            xid: rand::random_range(0..0x00FFFFFF),
             pending_lease: Default::default(),
             udp_socket: Default::default(),
             retransmit_count: Default::default(),
@@ -99,6 +97,10 @@ impl DhcpV6Client {
             error: Default::default(),
             timeout_timer: None,
         })
+    }
+
+    pub(crate) fn regen_xid(&mut self) {
+        self.xid = rand::random_range(0..0x00FFFFFF);
     }
 
     /// Please run this function in a loop so it could refresh the lease with
@@ -160,21 +162,19 @@ impl DhcpV6Client {
         &mut self,
         lease: &DhcpV6Lease,
     ) -> Result<(), DhcpError> {
-        let mut dhcp_msg = DhcpV6Message::new(
-            self.config.mode,
-            self.config.duid.clone(),
-            DhcpV6MessageType::RELEASE,
-            self.xid,
-        );
         // RFC 8415 suggest client do retransmission if no reply from DHCP
         // server, but still allows client terminate the procedure
-        // early. TODO(Gris Ge): Wait reply from DHCP server and retry.
-        dhcp_msg.add_elapsed_time(Instant::now());
-        dhcp_msg.load_lease(lease.clone())?;
+        // early.
+        // TODO(Gris Ge): Wait reply from DHCP server and retry.
+        let mut dhcp_msg = DhcpV6Message::new(
+            DhcpV6MessageType::Release,
+            self.xid,
+            &self.config.duid,
+            &Instant::now(),
+        );
+        dhcp_msg.load_lease(lease);
         let udp_socket = self.get_udp_socket_or_init().await?;
-        udp_socket
-            .send_multicast(&dhcp_msg.to_dhcp_packet()?)
-            .await?;
+        udp_socket.send_multicast(&dhcp_msg.emit()).await?;
         self.clean_up();
         Ok(())
     }
@@ -226,7 +226,7 @@ impl DhcpV6Client {
     }
 
     async fn wait_timer(&mut self) -> Result<(), DhcpError> {
-        let timer = if self.config.mode.is_temp_addr() {
+        let timer = if self.config.mode == DhcpV6Mode::TemporaryAddresses {
             self.valid_timer.as_ref()
         } else {
             self.t1_timer.as_ref()
@@ -234,7 +234,7 @@ impl DhcpV6Client {
         if let Some(timer) = timer {
             timer.wait().await?;
             self.reset_retransmit_counters();
-            if self.config.mode.is_temp_addr() {
+            if self.config.mode == DhcpV6Mode::TemporaryAddresses {
                 self.state = DhcpV6State::Solicit;
             } else {
                 self.state = DhcpV6State::Renew;

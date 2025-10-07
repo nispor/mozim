@@ -41,7 +41,7 @@ impl DhcpV4Client {
     }
 
     async fn _request(&mut self) -> Result<(), DhcpError> {
-        let lease = match self.pending_lease.take() {
+        let lease = match self.pending_lease.as_ref() {
             Some(l) => l,
             None => {
                 log::error!(
@@ -52,12 +52,8 @@ impl DhcpV4Client {
                 return Ok(());
             }
         };
-        let mut dhcp_msg = DhcpV4Message::new(
-            &self.config,
-            DhcpV4MessageType::Request,
-            self.xid,
-        );
-        dhcp_msg.load_lease(lease.clone());
+        let dhcp_msg =
+            DhcpV4Message::new_request(self.xid, &self.config, lease);
         let xid = self.xid;
         let raw_socket = self.get_raw_socket_or_init().await?;
 

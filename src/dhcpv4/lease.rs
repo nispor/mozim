@@ -2,12 +2,15 @@
 
 use std::net::Ipv4Addr;
 
-use dhcproto::{v4, v4::DhcpOption, Encodable};
+use super::{
+    msg::DhcpV4Message,
+    option::{DhcpV4ClasslessRoutes, DhcpV4Options},
+};
+use crate::{
+    DhcpError, DhcpV4ClasslessRoute, DhcpV4Option, DhcpV4OptionCode, ErrorKind,
+};
 
-use super::option::{DhcpV4Options, V4_OPT_CODE_MS_CLASSLESS_STATIC_ROUTE};
-use crate::{DhcpError, DhcpV4ClasslessRoute};
-
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 #[non_exhaustive]
 pub struct DhcpV4Lease {
     // Required for sending DHCPRELEASE in proxy mode
@@ -54,85 +57,129 @@ impl Default for DhcpV4Lease {
     }
 }
 
-impl std::convert::TryFrom<&v4::Message> for DhcpV4Lease {
-    type Error = DhcpError;
-    fn try_from(v4_dhcp_msg: &v4::Message) -> Result<Self, Self::Error> {
+impl DhcpV4Lease {
+    pub(crate) fn new_from_msg(msg: &DhcpV4Message) -> Result<Self, DhcpError> {
         let mut ret = Self {
-            siaddr: v4_dhcp_msg.siaddr(),
-            yiaddr: v4_dhcp_msg.yiaddr(),
-            dhcp_opts: DhcpV4Options::new(v4_dhcp_msg.opts().iter()),
+            siaddr: msg.siaddr,
+            yiaddr: msg.yiaddr,
+            dhcp_opts: msg.options.clone(),
             ..Default::default()
         };
-        for (code, dhcp_opt) in v4_dhcp_msg.opts().iter() {
-            match dhcp_opt {
-                DhcpOption::MessageType(_) => (),
-                DhcpOption::Renewal(v) => {
-                    ret.t1_sec = *v;
+        if let Some(DhcpV4Option::RenewalTime(v)) =
+            msg.options.get(DhcpV4OptionCode::RenewalTime)
+        {
+            ret.t1_sec = *v;
+        } else {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                format!("No T1 in DHCP message {msg:?}"),
+            ));
+        }
+
+        if let Some(DhcpV4Option::RebindingTime(v)) =
+            msg.options.get(DhcpV4OptionCode::RebindingTime)
+        {
+            ret.t2_sec = *v;
+        } else {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                format!("No T2 in DHCP message {msg:?}"),
+            ));
+        }
+        if let Some(DhcpV4Option::InterfaceMtu(v)) =
+            msg.options.get(DhcpV4OptionCode::InterfaceMtu)
+        {
+            ret.mtu = Some(*v);
+        }
+        if let Some(DhcpV4Option::ServerIdentifier(v)) =
+            msg.options.get(DhcpV4OptionCode::ServerIdentifier)
+        {
+            ret.srv_id = *v;
+        }
+        if let Some(DhcpV4Option::IpAddressLeaseTime(v)) =
+            msg.options.get(DhcpV4OptionCode::IpAddressLeaseTime)
+        {
+            ret.lease_time_sec = *v;
+        } else {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                format!("No lease time in DHCP message {msg:?}"),
+            ));
+        }
+        if let Some(DhcpV4Option::SubnetMask(v)) =
+            msg.options.get(DhcpV4OptionCode::SubnetMask)
+        {
+            ret.subnet_mask = *v;
+        }
+        if let Some(DhcpV4Option::BroadcastAddress(v)) =
+            msg.options.get(DhcpV4OptionCode::BroadcastAddress)
+        {
+            ret.broadcast_addr = Some(*v);
+        }
+        if let Some(DhcpV4Option::DomainNameServer(v)) =
+            msg.options.get(DhcpV4OptionCode::DomainNameServer)
+        {
+            ret.dns_srvs = Some(v.clone());
+        }
+        if let Some(DhcpV4Option::Router(v)) =
+            msg.options.get(DhcpV4OptionCode::Router)
+        {
+            ret.gateways = Some(v.clone());
+        }
+        if let Some(DhcpV4Option::NtpServers(v)) =
+            msg.options.get(DhcpV4OptionCode::NtpServers)
+        {
+            ret.ntp_srvs = Some(v.clone());
+        }
+        if let Some(DhcpV4Option::HostName(v)) =
+            msg.options.get(DhcpV4OptionCode::HostName)
+        {
+            ret.host_name = Some(v.to_string());
+        }
+        if let Some(DhcpV4Option::DomainName(v)) =
+            msg.options.get(DhcpV4OptionCode::DomainName)
+        {
+            ret.domain_name = Some(v.to_string());
+        }
+        if let Some(DhcpV4Option::ClasslessStaticRoute(v)) =
+            msg.options.get(DhcpV4OptionCode::ClasslessStaticRoute)
+        {
+            ret.classless_routes = Some(v.clone());
+        }
+
+        if ret.classless_routes.is_none() {
+            if let Some(raw) = msg.options.get_data_raw(
+                DhcpV4OptionCode::MS_CLASSLESS_STATIC_ROUTE.into(),
+            ) {
+                if let Ok(v) = DhcpV4ClasslessRoutes::parse(raw.as_slice()) {
+                    ret.classless_routes = Some(v);
                 }
-                DhcpOption::Rebinding(v) => {
-                    ret.t2_sec = *v;
-                }
-                DhcpOption::InterfaceMtu(v) => {
-                    ret.mtu = Some(*v);
-                }
-                DhcpOption::ServerIdentifier(v) => {
-                    ret.srv_id = *v;
-                }
-                DhcpOption::AddressLeaseTime(v) => {
-                    ret.lease_time_sec = *v;
-                }
-                DhcpOption::SubnetMask(v) => {
-                    ret.subnet_mask = *v;
-                }
-                DhcpOption::BroadcastAddr(v) => {
-                    ret.broadcast_addr = Some(*v);
-                }
-                DhcpOption::DomainNameServer(v) => {
-                    ret.dns_srvs = Some(v.clone());
-                }
-                DhcpOption::Router(v) => {
-                    ret.gateways = Some(v.clone());
-                }
-                DhcpOption::NtpServers(v) => {
-                    ret.ntp_srvs = Some(v.clone());
-                }
-                DhcpOption::Hostname(v) => {
-                    ret.host_name = Some(v.to_string());
-                }
-                DhcpOption::DomainName(v) => {
-                    ret.domain_name = Some(v.to_string());
-                }
-                DhcpOption::ClasslessStaticRoute(v) => {
-                    ret.classless_routes = Some(DhcpV4ClasslessRoute::parse(v));
-                }
-                DhcpOption::Unknown(v) => {
-                    if *code
-                        == v4::OptionCode::Unknown(
-                            V4_OPT_CODE_MS_CLASSLESS_STATIC_ROUTE,
-                        )
-                        && ret.classless_routes.is_none()
-                    {
-                        if let Some(routes) = v
-                            .to_vec()
-                            .ok()
-                            .and_then(DhcpV4ClasslessRoute::parse_raw)
-                        {
-                            ret.classless_routes = Some(routes);
-                        }
-                    }
-                }
-                _ => (),
             }
         }
-        // TODO: Validate T1 < T2 < lease_time_sec.
+        ret.validate()?;
         Ok(ret)
     }
-}
 
-impl DhcpV4Lease {
-    /// Return the raw data of specified DHCP option containing
-    /// leading code and length(if available) also.
-    pub fn get_option_raw(&self, code: u8) -> Option<&[u8]> {
+    fn validate(&self) -> Result<(), DhcpError> {
+        if self.t1_sec > self.t2_sec {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                "Invalid DHCP lease: T1 is bigger than T2".to_string(),
+            ));
+        }
+        if self.t2_sec > self.lease_time_sec {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                "Invalid DHCP lease: T2 is bigger than lease time".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Return the raw data of specified DHCP option without
+    /// leading code and length.
+    pub fn get_option_raw(&self, code: u8) -> Option<Vec<u8>> {
         self.dhcp_opts.get_data_raw(code)
     }
 }

@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use dhcproto::v4::OptionCode;
-
-use super::option::V4_OPT_CODE_MS_CLASSLESS_STATIC_ROUTE;
 use crate::{
     mac::parse_mac,
     netlink::{get_iface_index, get_iface_index_mac},
-    DhcpError, ErrorKind, ETH_ALEN,
+    DhcpError, DhcpV4OptionCode, ErrorKind, ETH_ALEN,
 };
 
 // https://www.iana.org/assignments/arp-parameters/arp-parameters.xhtml#arp-parameters-2
@@ -26,7 +23,7 @@ pub struct DhcpV4Config {
     /// Whether acting as DHCP proxy(whether mozim should listen on DHCP reply
     /// not target for interface MAC address).
     pub is_proxy: bool,
-    pub(crate) request_opts: Vec<OptionCode>,
+    pub(crate) request_opts: Vec<DhcpV4OptionCode>,
     /// Timeout in seconds for getting/refreshing lease.
     /// 0 means infinitely.
     /// By default is wait infinitely.
@@ -44,15 +41,15 @@ impl Default for DhcpV4Config {
             is_proxy: false,
             timeout_sec: 0,
             request_opts: vec![
-                OptionCode::Hostname,
-                OptionCode::SubnetMask,
-                OptionCode::Router,
-                OptionCode::DomainNameServer,
-                OptionCode::DomainName,
-                OptionCode::InterfaceMtu,
-                OptionCode::NtpServers,
-                OptionCode::ClasslessStaticRoute,
-                OptionCode::Unknown(V4_OPT_CODE_MS_CLASSLESS_STATIC_ROUTE),
+                DhcpV4OptionCode::HostName,
+                DhcpV4OptionCode::SubnetMask,
+                DhcpV4OptionCode::Router,
+                DhcpV4OptionCode::DomainNameServer,
+                DhcpV4OptionCode::DomainName,
+                DhcpV4OptionCode::InterfaceMtu,
+                DhcpV4OptionCode::NtpServers,
+                DhcpV4OptionCode::ClasslessStaticRoute,
+                DhcpV4OptionCode::MS_CLASSLESS_STATIC_ROUTE,
             ],
         }
     }
@@ -215,7 +212,8 @@ impl DhcpV4Config {
 
     /// Specify arbitrary DHCP options to request.
     pub fn override_request_dhcp_opts(&mut self, opts: &[u8]) -> &mut Self {
-        self.request_opts = opts.iter().map(|c| OptionCode::from(*c)).collect();
+        self.request_opts =
+            opts.iter().map(|c| DhcpV4OptionCode::from(*c)).collect();
         self.request_opts.sort_unstable();
         self.request_opts.dedup();
         self

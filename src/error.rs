@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
+pub trait ErrorContext<T: std::fmt::Display> {
+    fn context(self, msg: T) -> Self;
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ErrorKind {
     Timeout,
     InvalidArgument,
-    InvalidDhcpServerReply,
+    InvalidDhcpMessage,
     IoError,
     NoLease,
     NotSupported,
@@ -37,12 +41,33 @@ impl DhcpError {
     {
         Self {
             kind: self.kind,
-            msg: format!("{} caused by {}", msg, self.msg),
+            msg: format!("{}, caused by {}", msg, self.msg),
         }
     }
 }
 
 impl std::error::Error for DhcpError {}
+
+impl<T: std::fmt::Display> ErrorContext<T> for DhcpError {
+    fn context(self, msg: T) -> Self {
+        Self {
+            kind: self.kind,
+            msg: format!("{}, caused by {}", msg, self.msg),
+        }
+    }
+}
+
+impl<T, M> ErrorContext<M> for Result<T, DhcpError>
+where
+    M: std::fmt::Display,
+{
+    fn context(self, msg: M) -> Result<T, DhcpError> {
+        match self {
+            Ok(t) => Ok(t),
+            Err(e) => Err(e.context(msg)),
+        }
+    }
+}
 
 impl std::fmt::Display for ErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -65,12 +90,6 @@ impl From<std::io::Error> for DhcpError {
 impl From<std::ffi::NulError> for DhcpError {
     fn from(e: std::ffi::NulError) -> Self {
         Self::new(ErrorKind::Bug, format!("CString error: {e}"))
-    }
-}
-
-impl From<dhcproto::v4::EncodeError> for DhcpError {
-    fn from(e: dhcproto::v4::EncodeError) -> Self {
-        Self::new(ErrorKind::Bug, format!("DHCP protocol error: {e}"))
     }
 }
 
