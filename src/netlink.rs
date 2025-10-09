@@ -69,10 +69,19 @@ pub(crate) async fn get_link_local_addr(
         .execute();
 
     while let Some(nl_msg) = addrs.try_next().await? {
-        for attr in nl_msg.attributes {
+        // Prefer `AddressAttribute::Local` because `AddressAttribute::Address`
+        // is peer address when `AddressAttribute::Local` exists.
+        for attr in &nl_msg.attributes {
+            if let AddressAttribute::Local(IpAddr::V6(ip)) = attr {
+                if is_unique_link_local(*ip) {
+                    return Ok(*ip);
+                }
+            }
+        }
+        for attr in &nl_msg.attributes {
             if let AddressAttribute::Address(IpAddr::V6(ip)) = attr {
-                if is_unique_link_local(ip) {
-                    return Ok(ip);
+                if is_unique_link_local(*ip) {
+                    return Ok(*ip);
                 }
             }
         }

@@ -79,8 +79,8 @@ impl DhcpV6Client {
                 }
                 Err(_) => {
                     log::info!(
-                        "Timeout({}s) on waiting DHCP server DHCPOFFER reply \
-                         for DHCPDISCOVER, retrying",
+                        "Timeout({}s) on waiting DHCP server Advertise reply \
+                         for Solicit, retrying",
                         self.retransmit_timeout.as_secs(),
                     );
                     self.retransmit_count += 1;
