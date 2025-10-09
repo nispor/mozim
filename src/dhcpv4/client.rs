@@ -84,6 +84,8 @@ impl DhcpV4Client {
                 "Previous error found, please run DhcpV4Client::clean_up() if \
                  you want to start the DHCP process again"
             );
+            // Sleep 5 seconds to prevent infinite loop
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             Err(e.clone())
         } else if !self.state.is_done() && self.config.timeout_sec != 0 {
             let remains = if let Some(t) = self.timeout_timer.as_ref() {
