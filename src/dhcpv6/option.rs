@@ -3,9 +3,9 @@
 use std::{cmp::Ordering, collections::HashMap, net::Ipv6Addr};
 
 use crate::{
-    Buffer, BufferMut, DhcpError, DhcpV6Duid, DhcpV6OptionIaNa,
-    DhcpV6OptionIaPd, DhcpV6OptionIaTa, DhcpV6OptionStatus, ErrorContext,
-    ErrorKind,
+    Buffer, BufferMut, DhcpError, DhcpV6Duid, DhcpV6OptionIaAddr,
+    DhcpV6OptionIaNa, DhcpV6OptionIaPd, DhcpV6OptionIaPrefix, DhcpV6OptionIaTa,
+    DhcpV6OptionStatus, ErrorContext, ErrorKind,
 };
 
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
@@ -22,7 +22,7 @@ impl DhcpV6Options {
         let mut ret: Vec<Vec<u8>> = Vec::new();
         if let Some(opts) = self.data.get(&DhcpV6OptionCode::from(code)) {
             for opt in opts {
-                let mut buf = BufferMut::new(1024);
+                let mut buf = BufferMut::new();
                 opt.emit(&mut buf);
                 ret.push(buf.data);
             }
@@ -185,6 +185,30 @@ impl PartialOrd for DhcpV6OptionCode {
     }
 }
 
+impl std::fmt::Display for DhcpV6OptionCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ClientId => write!(f, "OPTION_CLIENTID"),
+            Self::ServerId => write!(f, "OPTION_SERVERID"),
+            Self::IANA => write!(f, "OPTION_IA_NA"),
+            Self::IATA => write!(f, "OPTION_IA_TA"),
+            Self::IAPD => write!(f, "OPTION_IA_PD"),
+            Self::IAAddr => write!(f, "OPTION_IAADDR"),
+            Self::IAPrefix => write!(f, "OPTION_IAPREFIX"),
+            Self::OptionRequestOption => write!(f, "OPTION_ORO"),
+            Self::Preference => write!(f, "OPTION_PREFERENCE"),
+            Self::ElapsedTime => write!(f, "OPTION_ELAPSED_TIME"),
+            Self::ServerUnicast => write!(f, "OPTION_UNICAST"),
+            Self::StatusCode => write!(f, "OPTION_STATUS_CODE"),
+            Self::RapidCommit => write!(f, "OPTION_RAPID_COMMIT"),
+            Self::DnsServers => write!(f, "OPTION_DNS_SERVERS"),
+            Self::DomainList => write!(f, "OPTION_DOMAIN_LIST"),
+            Self::NtpServer => write!(f, "OPTION_NTP_SERVER"),
+            Self::Other(d) => write!(f, "Unknown({d})"),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 #[non_exhaustive]
 pub enum DhcpV6Option {
@@ -194,6 +218,8 @@ pub enum DhcpV6Option {
     IATA(DhcpV6OptionIaTa),
     IAPD(DhcpV6OptionIaPd),
     OptionRequestOption(Vec<DhcpV6OptionCode>),
+    IAAddr(DhcpV6OptionIaAddr),
+    IAPrefix(DhcpV6OptionIaPrefix),
     Preference(u8),
     ElapsedTime(u16),
     ServerUnicast(Ipv6Addr),
@@ -227,7 +253,7 @@ impl PartialOrd for DhcpV6Option {
 }
 
 impl DhcpV6Option {
-    fn code(&self) -> DhcpV6OptionCode {
+    pub fn code(&self) -> DhcpV6OptionCode {
         match self {
             DhcpV6Option::ClientId(_) => DhcpV6OptionCode::ClientId,
             DhcpV6Option::ServerId(_) => DhcpV6OptionCode::ServerId,
@@ -245,84 +271,118 @@ impl DhcpV6Option {
             DhcpV6Option::DomainList(_) => DhcpV6OptionCode::DomainList,
             DhcpV6Option::IAPD(_) => DhcpV6OptionCode::IAPD,
             DhcpV6Option::NtpServer(_) => DhcpV6OptionCode::NtpServer,
+            DhcpV6Option::IAAddr(_) => DhcpV6OptionCode::IAAddr,
+            DhcpV6Option::IAPrefix(_) => DhcpV6OptionCode::IAPrefix,
             DhcpV6Option::Unknown(u) => u.code(),
         }
     }
 
-    fn parse(buf: &mut Buffer) -> Result<DhcpV6Option, DhcpError> {
+    pub(crate) fn parse(buf: &mut Buffer) -> Result<DhcpV6Option, DhcpError> {
         let code: DhcpV6OptionCode = buf
-            .get_u16_be()
+            .peek_u16_be()
             .context("Invalid DHCPv6 option code")?
             .into();
         let len: usize = buf
-            .get_u16_be()
+            .peek_u16_be_offset(2)
             .context("Invalid DHCPv6 option length")?
             .into();
+        let opt_raw = buf.get_bytes(len + 4).context(format!(
+            "Invalid DHCPv6 option {code} with length {len}"
+        ))?;
+        let mut opt_buf = Buffer::new(opt_raw);
+
         Ok(match code {
             DhcpV6OptionCode::IAAddr => {
-                return Err(DhcpError::new(
-                    ErrorKind::InvalidDhcpMessage,
-                    "Invalid DHCPv6 option OPTION_IAADDR: should be \
-                     encapsulated into OPTION_IA_NA/OPTION_IA_TA instead of \
-                     top level"
-                        .to_string(),
-                ));
+                Self::IAAddr(DhcpV6OptionIaAddr::parse(&mut opt_buf)?)
             }
             DhcpV6OptionCode::IAPrefix => {
-                return Err(DhcpError::new(
-                    ErrorKind::InvalidDhcpMessage,
-                    "Invalid DHCPv6 option OPTION_IAPREFIX: should be \
-                     encapsulated into OPTION_IA_PD instead of top level"
-                        .to_string(),
-                ));
+                Self::IAPrefix(DhcpV6OptionIaPrefix::parse(&mut opt_buf)?)
             }
             DhcpV6OptionCode::ClientId => {
-                Self::ClientId(DhcpV6Duid::parse(buf, len)?)
+                opt_buf.get_u16_be().context("Invalid DHCPv6 option code")?;
+                opt_buf
+                    .get_u16_be()
+                    .context("Invalid DHCPv6 option length")?;
+                Self::ClientId(DhcpV6Duid::parse(&mut opt_buf, len)?)
             }
             DhcpV6OptionCode::ServerId => {
-                Self::ServerId(DhcpV6Duid::parse(buf, len)?)
+                opt_buf.get_u16_be().context("Invalid DHCPv6 option code")?;
+                opt_buf
+                    .get_u16_be()
+                    .context("Invalid DHCPv6 option length")?;
+                Self::ServerId(DhcpV6Duid::parse(&mut opt_buf, len)?)
             }
             DhcpV6OptionCode::IANA => {
-                Self::IANA(DhcpV6OptionIaNa::parse(buf, len)?)
+                Self::IANA(DhcpV6OptionIaNa::parse(&mut opt_buf)?)
             }
             DhcpV6OptionCode::IATA => {
-                Self::IATA(DhcpV6OptionIaTa::parse(buf, len)?)
+                Self::IATA(DhcpV6OptionIaTa::parse(&mut opt_buf)?)
             }
             DhcpV6OptionCode::IAPD => {
-                Self::IAPD(DhcpV6OptionIaPd::parse(buf, len)?)
+                Self::IAPD(DhcpV6OptionIaPd::parse(&mut opt_buf)?)
             }
             DhcpV6OptionCode::OptionRequestOption => {
+                opt_buf.get_u16_be().context("Invalid DHCPv6 option code")?;
+                opt_buf
+                    .get_u16_be()
+                    .context("Invalid DHCPv6 option length")?;
                 let mut opts: Vec<DhcpV6OptionCode> = Vec::new();
                 for _ in 0..len / 2 {
                     opts.push(
-                        buf.get_u16_be()
+                        opt_buf
+                            .get_u16_be()
                             .context("Invalid DHCPv6 option OPTION_ORO")?
                             .into(),
                     );
                 }
                 Self::OptionRequestOption(opts)
             }
-            DhcpV6OptionCode::Preference => Self::Preference(
-                buf.get_u8()
-                    .context("Invalid DHCPv6 option OPTION_PREFERENCE")?,
-            ),
-            DhcpV6OptionCode::ElapsedTime => Self::ElapsedTime(
-                buf.get_u16_be()
-                    .context("Invalid DHCPv6 option OPTION_ELAPSED_TIME")?,
-            ),
-            DhcpV6OptionCode::ServerUnicast => Self::ServerUnicast(
-                buf.get_ipv6()
-                    .context("Invalid DHCPv6 option OPTION_UNICAST")?,
-            ),
+            DhcpV6OptionCode::Preference => Self::Preference({
+                opt_buf.get_u16_be().context("Invalid DHCPv6 option code")?;
+                opt_buf
+                    .get_u16_be()
+                    .context("Invalid DHCPv6 option length")?;
+                opt_buf
+                    .get_u8()
+                    .context("Invalid DHCPv6 option OPTION_PREFERENCE")?
+            }),
+            DhcpV6OptionCode::ElapsedTime => Self::ElapsedTime({
+                opt_buf.get_u16_be().context("Invalid DHCPv6 option code")?;
+                opt_buf
+                    .get_u16_be()
+                    .context("Invalid DHCPv6 option length")?;
+                opt_buf
+                    .get_u16_be()
+                    .context("Invalid DHCPv6 option OPTION_ELAPSED_TIME")?
+            }),
+            DhcpV6OptionCode::ServerUnicast => Self::ServerUnicast({
+                opt_buf.get_u16_be().context("Invalid DHCPv6 option code")?;
+                opt_buf
+                    .get_u16_be()
+                    .context("Invalid DHCPv6 option length")?;
+                opt_buf
+                    .get_ipv6()
+                    .context("Invalid DHCPv6 option OPTION_UNICAST")?
+            }),
             DhcpV6OptionCode::StatusCode => {
-                Self::StatusCode(DhcpV6OptionStatus::parse(buf, len)?)
+                Self::StatusCode(DhcpV6OptionStatus::parse(&mut opt_buf)?)
             }
-            DhcpV6OptionCode::RapidCommit => Self::RapidCommit,
+            DhcpV6OptionCode::RapidCommit => {
+                opt_buf.get_u16_be().context("Invalid DHCPv6 option code")?;
+                opt_buf
+                    .get_u16_be()
+                    .context("Invalid DHCPv6 option length")?;
+                Self::RapidCommit
+            }
             DhcpV6OptionCode::DnsServers => {
+                opt_buf.get_u16_be().context("Invalid DHCPv6 option code")?;
+                opt_buf
+                    .get_u16_be()
+                    .context("Invalid DHCPv6 option length")?;
                 let mut addrs = Vec::new();
                 for _ in 0..len / 16 {
                     addrs.push(
-                        buf.get_ipv6().context(
+                        opt_buf.get_ipv6().context(
                             "Invalid DHCPv6 option OPTION_DNS_SERVERS",
                         )?,
                     );
@@ -339,64 +399,76 @@ impl DhcpV6Option {
                 //      zero.  The high order two bits of every length octet
                 //      must be zero, and the remaining six bits of the length
                 //      field limit the label to 63 octets or less.
-                let raw = buf
+                opt_buf.get_u16_be().context("Invalid DHCPv6 option code")?;
+                opt_buf
+                    .get_u16_be()
+                    .context("Invalid DHCPv6 option length")?;
+                let raw = opt_buf
                     .get_bytes(len)
                     .context("Invalid DHCPv6 option OPTION_DOMAIN_LIST")?;
-                let mut tmp_buf = Buffer::new(raw);
+                let mut tmp_opt_buf = Buffer::new(raw);
                 let mut domains = Vec::new();
-                while !tmp_buf.is_empty() {
-                    let str_len = tmp_buf.get_u8().context(
+                while !tmp_opt_buf.is_empty() {
+                    let str_len = tmp_opt_buf.get_u8().context(
                         "Invalid DHCPv6 option OPTION_DOMAIN_LIST length",
                     )?;
                     domains.push(
-                        tmp_buf.get_string_with_null(str_len.into()).context(
-                            "Invalid DHCPv6 option OPTION_DOMAIN_LIST domain",
-                        )?,
+                        tmp_opt_buf
+                            .get_string_with_null(str_len.into())
+                            .context(
+                                "Invalid DHCPv6 option OPTION_DOMAIN_LIST \
+                                 domain",
+                            )?,
                     );
                 }
                 Self::DomainList(domains)
             }
             DhcpV6OptionCode::NtpServer => {
                 // RFC 5908
-                let raw = buf
+                opt_buf.get_u16_be().context("Invalid DHCPv6 option code")?;
+                opt_buf
+                    .get_u16_be()
+                    .context("Invalid DHCPv6 option length")?;
+                let raw = opt_buf
                     .get_bytes(len)
                     .context("Invalid DHCPv6 option OPTION_NTP_SERVER")?;
-                let mut tmp_buf = Buffer::new(raw);
+                let mut tmp_opt_buf = Buffer::new(raw);
                 let mut srvs: Vec<DhcpV6OptionNtpServer> = Vec::new();
-                while !tmp_buf.is_empty() {
-                    srvs.push(DhcpV6OptionNtpServer::parse(&mut tmp_buf)?);
+                while !tmp_opt_buf.is_empty() {
+                    srvs.push(DhcpV6OptionNtpServer::parse(&mut tmp_opt_buf)?);
                 }
                 Self::NtpServer(srvs)
             }
-            DhcpV6OptionCode::Other(d) => Self::Unknown(DhcpV6OptionUnknown {
-                code: d,
-                raw: buf
-                    .get_bytes(len)
-                    .context(format!("Invalid DHCPv6 option {d}"))?
-                    .to_vec(),
+            DhcpV6OptionCode::Other(d) => Self::Unknown({
+                opt_buf.get_u16_be().context("Invalid DHCPv6 option code")?;
+                opt_buf
+                    .get_u16_be()
+                    .context("Invalid DHCPv6 option length")?;
+                DhcpV6OptionUnknown {
+                    code: d,
+                    raw: opt_buf
+                        .get_bytes(len)
+                        .context(format!("Invalid DHCPv6 option {d}"))?
+                        .to_vec(),
+                }
             }),
         })
     }
 
-    fn emit(&self, buf: &mut BufferMut) {
+    pub(crate) fn emit(&self, buf: &mut BufferMut) {
         match self {
             Self::ClientId(id) | Self::ServerId(id) => {
-                let mut value_buf = BufferMut::new(0);
+                let mut value_buf = BufferMut::new();
                 id.emit(&mut value_buf);
                 buf.write_u16_be(self.code().into());
                 buf.write_u16_be(value_buf.len() as u16);
                 buf.write_bytes(value_buf.data.as_slice());
             }
-
-            Self::IANA(v) => {
-                v.emit(buf);
-            }
-            Self::IATA(v) => {
-                v.emit(buf);
-            }
-            Self::IAPD(v) => {
-                v.emit(buf);
-            }
+            Self::IAAddr(v) => v.emit(buf),
+            Self::IAPrefix(v) => v.emit(buf),
+            Self::IANA(v) => v.emit(buf),
+            Self::IATA(v) => v.emit(buf),
+            Self::IAPD(v) => v.emit(buf),
             Self::OptionRequestOption(opts) => {
                 buf.write_u16_be(self.code().into());
                 buf.write_u16_be((opts.len() * 2) as u16);
@@ -434,7 +506,7 @@ impl DhcpV6Option {
                 }
             }
             Self::DomainList(domains) => {
-                let mut value_buf = BufferMut::new(16);
+                let mut value_buf = BufferMut::new();
                 for domain in domains {
                     value_buf.write_u8((domain.len() + 1) as u8);
                     value_buf.write_string_with_null(domain, domain.len() + 1);
@@ -444,7 +516,7 @@ impl DhcpV6Option {
                 buf.write_bytes(value_buf.data.as_slice());
             }
             Self::NtpServer(srvs) => {
-                let mut value_buf = BufferMut::new(16);
+                let mut value_buf = BufferMut::new();
                 for srv in srvs {
                     srv.emit(&mut value_buf);
                 }

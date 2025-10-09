@@ -27,7 +27,7 @@ pub enum DhcpV6State {
 impl std::fmt::Display for DhcpV6State {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Done(lease) => write!(f, "done({})", lease.addr),
+            Self::Done(lease) => write!(f, "done({})", lease.address),
             Self::Solicit => write!(f, "solicit"),
             Self::Request => write!(f, "request"),
             Self::Renew => write!(f, "renew"),

@@ -27,6 +27,49 @@ impl<'a> Buffer<'a> {
         }
     }
 
+    pub(crate) fn peek_u16_be(&self) -> Result<u16, DhcpError> {
+        if self.remain_len() < 2 {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                "Remain buffer not enough for getting u16".to_string(),
+            ));
+        }
+        let ret = u16::from_be_bytes([
+            self.data[self.index],
+            self.data[self.index + 1],
+        ]);
+        Ok(ret)
+    }
+
+    pub(crate) fn peek_u16_be_offset(
+        &self,
+        offset: usize,
+    ) -> Result<u16, DhcpError> {
+        if self.remain_len() < 2 + offset {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                "Remain buffer not enough for getting u16".to_string(),
+            ));
+        }
+        let ret = u16::from_be_bytes([
+            self.data[self.index + offset],
+            self.data[self.index + offset + 1],
+        ]);
+        Ok(ret)
+    }
+
+    pub(crate) fn peek_bytes(&self, len: usize) -> Result<&[u8], DhcpError> {
+        if self.remain_len() < len {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                format!(
+                    "Remain buffer not enough for getting {len} bytes array"
+                ),
+            ));
+        }
+        Ok(&self.data[self.index..self.index + len])
+    }
+
     pub(crate) fn get_u8(&mut self) -> Result<u8, DhcpError> {
         if self.is_empty() {
             return Err(DhcpError::new(
@@ -40,16 +83,7 @@ impl<'a> Buffer<'a> {
     }
 
     pub(crate) fn get_u16_be(&mut self) -> Result<u16, DhcpError> {
-        if self.remain_len() < 2 {
-            return Err(DhcpError::new(
-                ErrorKind::InvalidDhcpMessage,
-                "Remain buffer not enough for getting u16".to_string(),
-            ));
-        }
-        let ret = u16::from_be_bytes([
-            self.data[self.index],
-            self.data[self.index + 1],
-        ]);
+        let ret = self.peek_u16_be()?;
         self.index += 2;
         Ok(ret)
     }
@@ -223,10 +257,8 @@ pub(crate) struct BufferMut {
 }
 
 impl BufferMut {
-    pub(crate) fn new(capacity: usize) -> Self {
-        Self {
-            data: Vec::with_capacity(capacity),
-        }
+    pub(crate) fn new() -> Self {
+        Self { data: Vec::new() }
     }
 
     pub(crate) fn len(&self) -> usize {

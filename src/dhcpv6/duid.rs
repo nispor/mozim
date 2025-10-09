@@ -42,11 +42,8 @@ impl DhcpV6Duid {
         buf: &mut Buffer,
         len: usize,
     ) -> Result<Self, DhcpError> {
-        // Instead of directly modify input buffer, we limit the data range to
-        // option length.
-        let raw = buf.get_bytes(len).context("Invalid DHCPv6 DUID")?;
-        let mut buf = Buffer::new(raw);
-        let id_type = buf.get_u16_be().context("Invalid DHCPv6 DUID type")?;
+        let raw = buf.peek_bytes(len).context("Invalid DHCPv6 DUID")?.to_vec();
+        let id_type = buf.peek_u16_be().context("Invalid DHCPv6 DUID type")?;
         // RFC 8415, 11. DHCP Unique Identifier (DUID)
         //   Clients and servers MUST treat DUIDs as opaque values and MUST only
         //   compare DUIDs for equality.  Clients and servers SHOULD NOT in any
@@ -56,27 +53,24 @@ impl DhcpV6Duid {
         // DUID as opaque byte array.
         Ok(match id_type {
             DUID_TYPE_LLT => {
-                match DhcpV6DuidLinkLayerAddrPlusTime::parse(&mut buf, len) {
+                match DhcpV6DuidLinkLayerAddrPlusTime::parse(buf) {
                     Ok(v) => Self::LinkLayerAddressPlusTime(v),
-                    Err(_) => Self::Raw(raw.to_vec()),
+                    Err(_) => Self::Raw(raw),
                 }
             }
-            DUID_TYPE_EN => {
-                match DhcpV6DuidEnterpriseNumber::parse(&mut buf, len) {
-                    Ok(v) => Self::EnterpriseNumber(v),
-                    Err(_) => Self::Raw(raw.to_vec()),
-                }
-            }
-            DUID_TYPE_LL => match DhcpV6DuidLinkLayerAddr::parse(&mut buf, len)
-            {
+            DUID_TYPE_EN => match DhcpV6DuidEnterpriseNumber::parse(buf) {
+                Ok(v) => Self::EnterpriseNumber(v),
+                Err(_) => Self::Raw(raw),
+            },
+            DUID_TYPE_LL => match DhcpV6DuidLinkLayerAddr::parse(buf) {
                 Ok(v) => Self::LinkLayerAddress(v),
-                Err(_) => Self::Raw(raw.to_vec()),
+                Err(_) => Self::Raw(raw),
             },
-            DUID_TYPE_UUID => match DhcpV6DuidUuid::parse(&mut buf, len) {
+            DUID_TYPE_UUID => match DhcpV6DuidUuid::parse(buf) {
                 Ok(v) => Self::UUID(v),
-                Err(_) => Self::Raw(raw.to_vec()),
+                Err(_) => Self::Raw(raw),
             },
-            _ => Self::Raw(raw.to_vec()),
+            _ => Self::Raw(raw),
         })
     }
 
@@ -107,6 +101,7 @@ const BASE_TIME: Duration = Duration::new(946684800, 0);
 #[non_exhaustive]
 pub struct DhcpV6DuidLinkLayerAddrPlusTime {
     pub hardware_type: u16,
+    /// Seconds since UTC midnight 2000 January 1, modulo 2^32
     pub time: u32,
     pub link_layer_address: Vec<u8>,
 }
@@ -128,19 +123,25 @@ impl DhcpV6DuidLinkLayerAddrPlusTime {
         }
     }
 
-    pub(crate) fn parse(
-        buf: &mut Buffer,
-        len: usize,
-    ) -> Result<Self, DhcpError> {
+    pub(crate) fn parse(buf: &mut Buffer) -> Result<Self, DhcpError> {
+        let subtype = buf
+            .get_u16_be()
+            .context("Invalid DHCPv6 DUID LLT subtype")?;
+        if subtype != DUID_TYPE_LLT {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                format!(
+                    "Invalid DHCPv6 DUID LLT subtype, expecting \
+                     {DUID_TYPE_LLT}, got {subtype}"
+                ),
+            ));
+        }
         Ok(Self {
             hardware_type: buf
                 .get_u16_be()
                 .context("Invalid DHCPv6 DUID LLT hardware type")?,
             time: buf.get_u32_be().context("Invalid DHCPv6 DUID LLT time")?,
-            link_layer_address: buf
-                .get_bytes(len - 8)
-                .context("Invalid DHCPv6 DUID LLT link layer address")?
-                .to_vec(),
+            link_layer_address: buf.get_remains().to_vec(),
         })
     }
 
@@ -168,18 +169,23 @@ impl DhcpV6DuidEnterpriseNumber {
         }
     }
 
-    pub(crate) fn parse(
-        buf: &mut Buffer,
-        len: usize,
-    ) -> Result<Self, DhcpError> {
+    pub(crate) fn parse(buf: &mut Buffer) -> Result<Self, DhcpError> {
+        let subtype =
+            buf.get_u16_be().context("Invalid DHCPv6 DUID EN subtype")?;
+        if subtype != DUID_TYPE_EN {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                format!(
+                    "Invalid DHCPv6 DUID EN subtype, expecting \
+                     {DUID_TYPE_EN}, got {subtype}"
+                ),
+            ));
+        }
         Ok(Self {
             enterprise_number: buf
                 .get_u32_be()
                 .context("Invalid DHCPv6 DUID EN enterprise number")?,
-            identifier: buf
-                .get_bytes(len - 6)
-                .context("Invalid DHCPv6 DUID EN identifier")?
-                .to_vec(),
+            identifier: buf.get_remains().to_vec(),
         })
     }
 
@@ -206,18 +212,23 @@ impl DhcpV6DuidLinkLayerAddr {
         }
     }
 
-    pub(crate) fn parse(
-        buf: &mut Buffer,
-        len: usize,
-    ) -> Result<Self, DhcpError> {
+    pub(crate) fn parse(buf: &mut Buffer) -> Result<Self, DhcpError> {
+        let subtype =
+            buf.get_u16_be().context("Invalid DHCPv6 DUID LL subtype")?;
+        if subtype != DUID_TYPE_LL {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                format!(
+                    "Invalid DHCPv6 DUID LL subtype, expecting \
+                     {DUID_TYPE_LL}, got {subtype}"
+                ),
+            ));
+        }
         Ok(Self {
             hardware_type: buf
                 .get_u16_be()
                 .context("Invalid DHCPv6 DUID LL hardware type")?,
-            link_layer_address: buf
-                .get_bytes(len - 4)
-                .context("Invalid DHCPv6 DUID LL link layer address")?
-                .to_vec(),
+            link_layer_address: buf.get_remains().to_vec(),
         })
     }
 
@@ -240,19 +251,26 @@ impl DhcpV6DuidUuid {
         Self { uuid }
     }
 
-    pub(crate) fn parse(
-        buf: &mut Buffer,
-        len: usize,
-    ) -> Result<Self, DhcpError> {
-        if len != 16 {
-            // Still need to consume the buffer in case caller decided to move
-            // even with error
-            buf.get_bytes(len).ok();
+    pub(crate) fn parse(buf: &mut Buffer) -> Result<Self, DhcpError> {
+        let subtype = buf
+            .get_u16_be()
+            .context("Invalid DHCPv6 DUID UUID subtype")?;
+        if subtype != DUID_TYPE_UUID {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                format!(
+                    "Invalid DHCPv6 DUID UUID subtype, expecting \
+                     {DUID_TYPE_UUID}, got {subtype}"
+                ),
+            ));
+        }
+        if buf.remain_len() != 16 {
             Err(DhcpError::new(
                 ErrorKind::InvalidDhcpMessage,
                 format!(
-                    "Invalid DHCPv6 DUID UUID, expecting 16 bytes, got {len} \
-                     bytes"
+                    "Invalid DHCPv6 DUID UUID, expecting 16 bytes, got {} \
+                     bytes",
+                    buf.remain_len()
                 ),
             ))
         } else {
@@ -266,4 +284,69 @@ impl DhcpV6DuidUuid {
         buf.write_u16_be(DUID_TYPE_UUID);
         buf.write_u128_be(self.uuid);
     }
+}
+
+#[cfg(test)]
+mod test {
+
+    use super::*;
+    use crate::DhcpV6Option;
+
+    #[test]
+    fn parse_srv_duid_llt() -> Result<(), DhcpError> {
+        let raw: &[u8] = &[
+            0x00, 0x02, 0x00, 0x0e, 0x00, 0x01, 0x00, 0x01, 0x30, 0x7a, 0x70,
+            0xb8, 0x72, 0x07, 0x26, 0xd9, 0x99, 0xd9,
+        ];
+        let duid = DhcpV6Option::parse(&mut Buffer::new(raw))?;
+
+        assert_eq!(
+            duid,
+            DhcpV6Option::ServerId(DhcpV6Duid::LinkLayerAddressPlusTime(
+                DhcpV6DuidLinkLayerAddrPlusTime {
+                    hardware_type: 1,
+                    time: 0x307a70b8,
+                    link_layer_address: vec![
+                        0x72, 0x07, 0x26, 0xd9, 0x99, 0xd9
+                    ],
+                }
+            ))
+        );
+        let mut buf = BufferMut::new();
+        duid.emit(&mut buf);
+
+        assert_eq!(buf.data.as_slice(), raw);
+        Ok(())
+    }
+
+    #[test]
+    fn parse_cli_duid_ll() -> Result<(), DhcpError> {
+        let raw: &[u8] = &[
+            0x00, 0x01, 0x00, 0x0a, 0x00, 0x03, 0x00, 0x01, 0xd2, 0xfd, 0xf9,
+            0xb4, 0x48, 0xb7,
+        ];
+        let duid = DhcpV6Option::parse(&mut Buffer::new(raw))?;
+
+        assert_eq!(
+            duid,
+            DhcpV6Option::ClientId(DhcpV6Duid::LinkLayerAddress(
+                DhcpV6DuidLinkLayerAddr {
+                    hardware_type: 1,
+                    link_layer_address: vec![
+                        0xd2, 0xfd, 0xf9, 0xb4, 0x48, 0xb7
+                    ],
+                }
+            ))
+        );
+
+        let mut buf = BufferMut::new();
+        duid.emit(&mut buf);
+
+        assert_eq!(buf.data.as_slice(), raw);
+
+        Ok(())
+    }
+
+    // TODO: Add test for UUID, but I never able to capture third party DHCP
+    // Client or server use UUID. So no trust source yet.
 }

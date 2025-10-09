@@ -411,7 +411,7 @@ impl DhcpV4Options {
     }
 
     pub fn get_data_raw(&self, code: u8) -> Option<Vec<u8>> {
-        let mut buf = BufferMut::new(0);
+        let mut buf = BufferMut::new();
         self.data.get(&code.into()).map(|v| {
             v.emit(&mut buf);
             buf.data
@@ -422,10 +422,7 @@ impl DhcpV4Options {
         let mut ret = Self::new();
         let mut buf = Buffer::new(raw);
 
-        loop {
-            if buf.is_empty() {
-                break;
-            }
+        while !buf.is_empty() {
             match DhcpV4Option::parse(&mut buf) {
                 Ok(opt) => {
                     if opt == DhcpV4Option::End {
@@ -541,7 +538,7 @@ impl DhcpV4ClasslessRoutes {
     }
 
     pub(crate) fn emit(rts: &[DhcpV4ClasslessRoute], buf: &mut BufferMut) {
-        let mut tmp_buf = BufferMut::new(8 * rts.len());
+        let mut tmp_buf = BufferMut::new();
         for rt in rts {
             rt.emit(&mut tmp_buf);
         }
