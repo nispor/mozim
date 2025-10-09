@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{Buffer, BufferMut, DhcpError, DhcpV6OptionCode, ErrorContext};
+use crate::{
+    Buffer, BufferMut, DhcpError, DhcpV6OptionCode, ErrorContext, ErrorKind,
+};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct DhcpV6OptionStatus {
@@ -13,10 +15,32 @@ impl DhcpV6OptionStatus {
         self.status == DhcpV6OptionStatusCode::Success
     }
 
-    pub(crate) fn parse(
-        buf: &mut Buffer,
-        len: usize,
-    ) -> Result<Self, DhcpError> {
+    pub(crate) const fn code() -> DhcpV6OptionCode {
+        DhcpV6OptionCode::StatusCode
+    }
+
+    pub(crate) fn parse(buf: &mut Buffer) -> Result<Self, DhcpError> {
+        let code = buf.get_u16_be().context("Invalid DHCPv6 option code")?;
+        if code != Self::code().into() {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidArgument,
+                format!(
+                    "Expecting DHCPv6 option {} code {}, got {}",
+                    Self::code(),
+                    u16::from(Self::code()),
+                    code
+                ),
+            ));
+        }
+        let len: usize = buf
+            .get_u16_be()
+            .context("Invalid DHCPv6 option len")?
+            .into();
+        let raw = buf
+            .get_bytes(len)
+            .context("Invalid DHCPv6 option OPTION_STATUS_CODE")?;
+        let mut buf = Buffer::new(raw);
+
         Ok(Self {
             status: buf
                 .get_u16_be()
@@ -31,7 +55,7 @@ impl DhcpV6OptionStatus {
     }
 
     pub(crate) fn emit(&self, buf: &mut BufferMut) {
-        buf.write_u16_be(DhcpV6OptionCode::IAAddr.into());
+        buf.write_u16_be(DhcpV6OptionCode::StatusCode.into());
         buf.write_u16_be((self.message.len() + 2) as u16);
         buf.write_u16_be(self.status.into());
         buf.write_string_without_null(&self.message);
@@ -104,5 +128,38 @@ impl From<u16> for DhcpV6OptionStatusCode {
             }
             _ => DhcpV6OptionStatusCode::Other(d),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::DhcpV6Option;
+
+    #[test]
+    fn parse_status_no_addr_avail() -> Result<(), DhcpError> {
+        let raw = &[
+            0x00, 0x0d, 0x00, 0x18, 0x00, 0x02, 0x6e, 0x6f, 0x20, 0x61, 0x64,
+            0x64, 0x72, 0x65, 0x73, 0x73, 0x65, 0x73, 0x20, 0x61, 0x76, 0x61,
+            0x69, 0x6c, 0x61, 0x62, 0x6c, 0x65,
+        ];
+
+        let mut buf = Buffer::new(raw);
+
+        let opt = DhcpV6Option::parse(&mut buf)?;
+
+        assert_eq!(
+            opt,
+            DhcpV6Option::StatusCode(DhcpV6OptionStatus {
+                status: DhcpV6OptionStatusCode::NoAddrsAvail,
+                message: "no addresses available".into(),
+            })
+        );
+
+        let mut buf = BufferMut::new();
+        opt.emit(&mut buf);
+
+        assert_eq!(buf.data.as_slice(), raw);
+        Ok(())
     }
 }

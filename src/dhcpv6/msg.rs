@@ -139,7 +139,7 @@ impl DhcpV6Message {
                         lease.t1_sec,
                         lease.t2_sec,
                         DhcpV6OptionIaAddr::new(
-                            lease.addr,
+                            lease.address,
                             lease.preferred_time_sec,
                             lease.valid_time_sec,
                         ),
@@ -150,7 +150,7 @@ impl DhcpV6Message {
                     .insert(DhcpV6Option::IATA(DhcpV6OptionIaTa::new(
                         lease.iaid,
                         DhcpV6OptionIaAddr::new(
-                            lease.addr,
+                            lease.address,
                             lease.preferred_time_sec,
                             lease.valid_time_sec,
                         ),
@@ -159,7 +159,7 @@ impl DhcpV6Message {
             Some(DhcpV6IaType::PrefixDelegation) => {
                 self.options
                     .insert(DhcpV6Option::IAPD(DhcpV6OptionIaPd::new(
-                        lease.addr,
+                        lease.address,
                         lease.prefix_len,
                     )));
             }
@@ -188,7 +188,7 @@ impl DhcpV6Message {
     }
 
     pub(crate) fn emit(&self) -> Vec<u8> {
-        let mut buf = BufferMut::new(512);
+        let mut buf = BufferMut::new();
         buf.write_u8(self.msg_type.into());
         buf.write_bytes(&self.xid);
         self.options.emit(&mut buf);

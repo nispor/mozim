@@ -279,7 +279,7 @@ impl DhcpV4Message {
 
     pub(crate) fn to_eth_packet_broadcast(&self) -> Result<Vec<u8>, DhcpError> {
         log::trace!("Generating ethernet broadcast for DHCP message {self:?}");
-        let mut buf = BufferMut::new(Self::MIN_LEN);
+        let mut buf = BufferMut::new();
         self.emit(&mut buf);
         log::trace!("DHCP packet generated {:?}", buf.data);
 
@@ -311,7 +311,7 @@ impl DhcpV4Message {
     }
 
     pub(crate) fn to_dhcp_packet(&self) -> Result<Vec<u8>, DhcpError> {
-        let mut buf = BufferMut::new(Self::MIN_LEN);
+        let mut buf = BufferMut::new();
         self.emit(&mut buf);
         Ok(buf.data)
     }

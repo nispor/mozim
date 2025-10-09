@@ -99,7 +99,7 @@ impl DhcpV6Client {
         //      messages, it is allowed only if the Server Unicast option is
         //      configured.
         udp_socket.send_multicast(&dhcp_packet.emit()).await?;
-        log::debug!("Waiting server reply with Advertise");
+        log::debug!("Waiting server reply with Reply");
         // Make sure we wait all reply from DHCP server instead of
         // failing on first DHCP invalid reply
         loop {

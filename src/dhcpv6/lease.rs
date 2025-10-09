@@ -23,7 +23,7 @@ pub struct DhcpV6Lease {
     pub xid: u32,
     pub iaid: u32,
     pub ia_type: Option<DhcpV6IaType>,
-    pub addr: Ipv6Addr,
+    pub address: Ipv6Addr,
     // Only valid for IA_PD(Prefix Delegation)
     pub prefix_len: u8,
     pub cli_duid: DhcpV6Duid,
@@ -43,7 +43,7 @@ impl Default for DhcpV6Lease {
             xid: 0,
             iaid: 0,
             ia_type: None,
-            addr: Ipv6Addr::UNSPECIFIED,
+            address: Ipv6Addr::UNSPECIFIED,
             prefix_len: 128,
             cli_duid: DhcpV6Duid::default(),
             srv_duid: DhcpV6Duid::default(),
@@ -86,16 +86,25 @@ impl DhcpV6Lease {
             // RFC 8415: In a typical deployment, the server will grant
             // one address for each IA_NA option.
             // So we only take first address
-            if v.address.is_success() {
-                ret.addr = v.address.addr;
-                ret.preferred_time_sec = v.address.preferred_time_sec;
-                ret.valid_time_sec = v.address.valid_time_sec;
-                ret.iaid = v.iaid;
-                ret.t1_sec = v.t1_sec;
-                ret.t2_sec = v.t2_sec;
-            } else if let Some(status) = v.address.status.as_ref() {
-                // When not success, it should always has a status code
-                // option
+            if v.is_success() {
+                if let Some(addr) = v.address.as_ref() {
+                    ret.address = addr.address;
+                    ret.preferred_time_sec = addr.preferred_time_sec;
+                    ret.valid_time_sec = addr.valid_time_sec;
+                    ret.iaid = v.iaid;
+                    ret.t1_sec = v.t1_sec;
+                    ret.t2_sec = v.t2_sec;
+                }
+            } else if let Some(status) = v.status.as_ref() {
+                log::info!(
+                    "Lease not successful for IANA in DHCPv6 message: code \
+                     {}, message {}",
+                    status.status,
+                    status.message
+                );
+            } else if let Some(status) =
+                v.address.as_ref().and_then(|addr| addr.status.as_ref())
+            {
                 log::info!(
                     "Lease not successful for IANA in DHCPv6 message: code \
                      {}, message {}",
@@ -108,15 +117,25 @@ impl DhcpV6Lease {
             msg.options.get_first(DhcpV6OptionCode::IATA)
         {
             ret.ia_type = Some(DhcpV6IaType::TemporaryAddresses);
-            if v.address.is_success() {
-                ret.addr = v.address.addr;
-                ret.preferred_time_sec =
-                    TEMP_PREFERRED_LIFETIME.as_secs() as u32;
-                ret.valid_time_sec = TEMP_VALID_LIFETIME.as_secs() as u32;
-                ret.iaid = v.iaid;
-            } else if let Some(status) = v.address.status.as_ref() {
-                // When not success, it should always has a status code
-                // option
+
+            if v.is_success() {
+                if let Some(addr) = v.address.as_ref() {
+                    ret.address = addr.address;
+                    ret.preferred_time_sec =
+                        TEMP_PREFERRED_LIFETIME.as_secs() as u32;
+                    ret.valid_time_sec = TEMP_VALID_LIFETIME.as_secs() as u32;
+                    ret.iaid = v.iaid;
+                }
+            } else if let Some(status) = v.status.as_ref() {
+                log::info!(
+                    "Lease not successful for IATA in DHCPv6 message: code \
+                     {}, message {}",
+                    status.status,
+                    status.message
+                );
+            } else if let Some(status) =
+                v.address.as_ref().and_then(|addr| addr.status.as_ref())
+            {
                 log::info!(
                     "Lease not successful for IATA in DHCPv6 message: code \
                      {}, message {}",
@@ -129,17 +148,26 @@ impl DhcpV6Lease {
             msg.options.get_first(DhcpV6OptionCode::IAPD)
         {
             ret.ia_type = Some(DhcpV6IaType::PrefixDelegation);
-            if v.prefix.is_success() {
-                ret.iaid = v.iaid;
-                ret.t1_sec = v.t1_sec;
-                ret.t2_sec = v.t2_sec;
-                ret.addr = v.prefix.prefix;
-                ret.preferred_time_sec = v.prefix.preferred_time_sec;
-                ret.valid_time_sec = v.prefix.valid_time_sec;
-                ret.prefix_len = v.prefix.prefix_len;
-            } else if let Some(status) = v.prefix.status.as_ref() {
-                // When not success, it should always has a status code
-                // option
+            if v.is_success() {
+                if let Some(prefix) = v.prefix.as_ref() {
+                    ret.address = prefix.prefix;
+                    ret.preferred_time_sec = prefix.preferred_time_sec;
+                    ret.valid_time_sec = prefix.valid_time_sec;
+                    ret.prefix_len = prefix.prefix_len;
+                    ret.iaid = v.iaid;
+                    ret.t1_sec = v.t1_sec;
+                    ret.t2_sec = v.t2_sec;
+                }
+            } else if let Some(status) = v.status.as_ref() {
+                log::info!(
+                    "Lease not successful for IAPD in DHCPv6 message: code \
+                     {}, message {}",
+                    status.status,
+                    status.message
+                );
+            } else if let Some(status) =
+                v.prefix.as_ref().and_then(|prefix| prefix.status.as_ref())
+            {
                 log::info!(
                     "Lease not successful for IAPD in DHCPv6 message: code \
                      {}, message {}",
@@ -210,7 +238,7 @@ impl DhcpV6Lease {
                 "DHCPv6 lease contains empty server DUID".to_string(),
             ));
         }
-        if self.addr == Ipv6Addr::UNSPECIFIED {
+        if self.address == Ipv6Addr::UNSPECIFIED {
             return Err(DhcpError::new(
                 ErrorKind::InvalidDhcpMessage,
                 "DHCPv6 lease contains invalid all zero lease IPv6 address"
