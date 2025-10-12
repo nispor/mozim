@@ -3,9 +3,7 @@
 use std::net::Ipv6Addr;
 
 use crate::{
-    netlink::{get_iface_index, get_iface_index_mac, get_link_local_addr},
-    DhcpError, DhcpV6Duid, DhcpV6DuidLinkLayerAddr, DhcpV6OptionCode,
-    ErrorKind, ETH_ALEN,
+    DhcpError, DhcpV6Duid, DhcpV6DuidLinkLayerAddr, DhcpV6OptionCode, ETH_ALEN,
 };
 
 // https://www.iana.org/assignments/arp-parameters/arp-parameters.xhtml
@@ -102,10 +100,14 @@ impl DhcpV6Config {
     }
 
     /// Get interface MAC address, IPv6 link-local address and interface index.
+    #[cfg(feature = "netlink")]
     pub(crate) async fn resolve(&mut self) -> Result<(), DhcpError> {
-        self.iface_index = get_iface_index(&self.iface_name).await?;
+        self.iface_index =
+            crate::netlink::get_iface_index(&self.iface_name).await?;
 
-        if let Ok((_, src_mac)) = get_iface_index_mac(&self.iface_name).await {
+        if let Ok((_, src_mac)) =
+            crate::netlink::get_iface_index_mac(&self.iface_name).await
+        {
             if src_mac.len() == ETH_ALEN {
                 let mut tmp_src_mac = [0u8; ETH_ALEN];
                 tmp_src_mac.copy_from_slice(&src_mac[..ETH_ALEN]);
@@ -113,9 +115,22 @@ impl DhcpV6Config {
             }
         }
 
-        self.src_ip = get_link_local_addr(self.iface_index).await?;
+        self.src_ip =
+            crate::netlink::get_link_local_addr(self.iface_index).await?;
         self.get_duid_or_init();
         Ok(())
+    }
+
+    #[cfg(not(feature = "netlink"))]
+    pub(crate) async fn resolve(&mut self) -> Result<(), DhcpError> {
+        Err(DhcpError::new(
+            crate::ErrorKind::InvalidArgument,
+            format!(
+                "Feature `netlink` not enabled, cannot resolve interface {} \
+                 index and IPv6 link local address, please set them manually",
+                self.iface_name,
+            ),
+        ))
     }
 
     pub fn set_iface_index(&mut self, iface_index: u32) -> &mut Self {
@@ -137,31 +152,12 @@ impl DhcpV6Config {
 
     /// Use MAC address of interface to setup DUID to
     /// `DhcpV6Duid::LinkLayerAddress`.
-    pub async fn set_duid_by_iface_mac(
-        &mut self,
-    ) -> Result<&mut Self, DhcpError> {
-        self.duid = if let Some(mac) = self.src_mac.as_ref() {
-            DhcpV6Duid::LinkLayerAddress(DhcpV6DuidLinkLayerAddr::new(
-                ARP_HW_TYPE_ETHERNET,
-                mac,
-            ))
-        } else if let Ok((_, src_mac)) =
-            get_iface_index_mac(&self.iface_name).await
-        {
-            DhcpV6Duid::LinkLayerAddress(DhcpV6DuidLinkLayerAddr::new(
-                ARP_HW_TYPE_ETHERNET,
-                &src_mac,
-            ))
-        } else {
-            return Err(DhcpError::new(
-                ErrorKind::NotSupported,
-                format!(
-                    "Failed to get MAC address of interface {}",
-                    self.iface_name
-                ),
-            ));
-        };
-        Ok(self)
+    pub fn set_duid_by_iface_mac(&mut self, mac: &[u8]) -> &mut Self {
+        self.duid = DhcpV6Duid::LinkLayerAddress(DhcpV6DuidLinkLayerAddr::new(
+            ARP_HW_TYPE_ETHERNET,
+            mac,
+        ));
+        self
     }
 
     /// Get DUID or initialize to DhcpV6Duid::LinkLayerAddress() when found MAC
