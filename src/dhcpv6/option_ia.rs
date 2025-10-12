@@ -252,14 +252,29 @@ impl Default for DhcpV6OptionIaPd {
 }
 
 impl DhcpV6OptionIaPd {
-    pub(crate) fn new(prefix: Ipv6Addr, prefix_len: u8) -> Self {
+    pub fn new_with_hint(prefix_len: u8) -> Self {
         Self {
             prefix: Some(DhcpV6OptionIaPrefix {
-                prefix,
+                prefix: Ipv6Addr::UNSPECIFIED,
                 prefix_len,
                 ..Default::default()
             }),
             ..Default::default()
+        }
+    }
+
+    pub fn new(
+        iaid: u32,
+        t1_sec: u32,
+        t2_sec: u32,
+        prefix: DhcpV6OptionIaPrefix,
+    ) -> Self {
+        Self {
+            iaid,
+            t1_sec,
+            t2_sec,
+            prefix: Some(prefix),
+            status: None,
         }
     }
 
@@ -468,6 +483,21 @@ impl Default for DhcpV6OptionIaPrefix {
 }
 
 impl DhcpV6OptionIaPrefix {
+    pub fn new(
+        prefix: Ipv6Addr,
+        prefix_len: u8,
+        preferred_time_sec: u32,
+        valid_time_sec: u32,
+    ) -> Self {
+        Self {
+            preferred_time_sec,
+            valid_time_sec,
+            prefix_len,
+            prefix,
+            status: None,
+        }
+    }
+
     pub(crate) fn is_success(&self) -> bool {
         if let Some(s) = self.status.as_ref() {
             s.is_success()

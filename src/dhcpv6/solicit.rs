@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{
-    net::Ipv6Addr,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use super::{
     msg::{DhcpV6Message, DhcpV6MessageType},
@@ -155,10 +152,9 @@ fn new_solicit_msg(
             ret.options.insert(DhcpV6Option::IATA(Default::default()));
         }
         DhcpV6Mode::PrefixDelegation(prefix_len_hint) => {
-            ret.options.insert(DhcpV6Option::IAPD(DhcpV6OptionIaPd::new(
-                Ipv6Addr::UNSPECIFIED,
-                prefix_len_hint,
-            )));
+            ret.options.insert(DhcpV6Option::IAPD(
+                DhcpV6OptionIaPd::new_with_hint(prefix_len_hint),
+            ));
         }
     }
 
