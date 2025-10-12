@@ -17,7 +17,7 @@ pub struct DhcpV4Config {
     /// Interface index to run DHCP against.
     pub iface_index: u32,
     /// MAC address of interface or proxy.
-    pub src_mac: [u8; ETH_ALEN],
+    pub(crate) src_mac: [u8; ETH_ALEN],
     pub(crate) client_id: Vec<u8>,
     pub(crate) host_name: String,
     /// Whether acting as DHCP proxy(whether mozim should listen on DHCP reply
