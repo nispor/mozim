@@ -1,0 +1,46 @@
+#!/bin/bash -x
+
+CONFIG_FILE="/tmp/dhcpd.conf"
+LEASE_FILE="/tmp/dhcpd.lease"
+PID_FILE="/tmp/dhcpd.pid"
+DHCP_SRV_IP6="2001:db8:a::1"
+
+cat > $CONFIG_FILE <<EOF
+subnet6 2001:db8:a::/64 {
+        range6  2001:db8:a::1000 2001:db8:a::ffff;
+        prefix6 2001:db8:b:: 2001:db8:ff:: / 60;
+        option dhcp6.name-servers 2001:db8:a::1;
+        max-lease-time 120;
+        default-lease-time 120;
+}
+EOF
+
+echo "" | sudo tee $LEASE_FILE
+
+if [ -e $PID_FILE ];then
+    sudo kill `cat $PID_FILE`
+    sudo rm -f $PID_FILE
+fi
+
+if [ "CHK$1" == "CHKrm" ]; then
+    sudo ip link del dhcpcli
+    sudo ip netns del mozim
+    exit
+fi
+
+sudo ip netns add mozim
+sudo ip link add dhcpcli type veth peer name dhcpsrv
+sudo ip link set dhcpcli up
+sudo ip link set dhcpsrv netns mozim
+sudo ip netns exec mozim ip link set dhcpsrv up
+sudo ip netns exec mozim ip -6 addr add ${DHCP_SRV_IP6}/64 dev dhcpsrv
+sudo ip netns exec mozim \
+    dhcpd -6 -d -cf $CONFIG_FILE -lf $LEASE_FILE -pf $PID_FILE
+
+if [ "CHK$1" == "CHK" ];then
+    sudo kill `cat $PID_FILE`
+    sudo rm $PID_FILE
+    #sudo rm $LEASE_FILE
+    sudo ip link del dhcpcli
+    sudo ip netns del mozim
+fi

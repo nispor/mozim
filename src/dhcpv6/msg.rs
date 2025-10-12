@@ -6,8 +6,8 @@ use super::option::DhcpV6Options;
 use crate::{
     buffer::{Buffer, BufferMut},
     DhcpError, DhcpV6Duid, DhcpV6IaType, DhcpV6Lease, DhcpV6Option,
-    DhcpV6OptionIaAddr, DhcpV6OptionIaNa, DhcpV6OptionIaPd, DhcpV6OptionIaTa,
-    ErrorContext, ErrorKind,
+    DhcpV6OptionIaAddr, DhcpV6OptionIaNa, DhcpV6OptionIaPd,
+    DhcpV6OptionIaPrefix, DhcpV6OptionIaTa, ErrorContext, ErrorKind,
 };
 
 /// DHCPv6 Message Type
@@ -159,8 +159,15 @@ impl DhcpV6Message {
             Some(DhcpV6IaType::PrefixDelegation) => {
                 self.options
                     .insert(DhcpV6Option::IAPD(DhcpV6OptionIaPd::new(
-                        lease.address,
-                        lease.prefix_len,
+                        lease.iaid,
+                        lease.t1_sec,
+                        lease.t2_sec,
+                        DhcpV6OptionIaPrefix::new(
+                            lease.address,
+                            lease.prefix_len,
+                            lease.preferred_time_sec,
+                            lease.valid_time_sec,
+                        ),
                     )));
             }
             None => (),
@@ -183,7 +190,7 @@ impl DhcpV6Message {
                 .context("Invalid DHCPv6 message transaction-id")?,
         );
         ret.options = DhcpV6Options::parse(&mut buf)?;
-        log::debug!("Got reply DHCP message {ret:?}");
+        log::trace!("Got reply DHCP message {ret:?}");
         Ok(ret)
     }
 
