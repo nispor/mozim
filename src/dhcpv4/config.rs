@@ -66,16 +66,20 @@ impl DhcpV4Config {
 
     pub fn set_iface_mac(&mut self, mac: &str) -> Result<&mut Self, DhcpError> {
         let src_mac = parse_mac(mac)?;
-        if src_mac.len() != ETH_ALEN {
+        self.set_iface_mac_raw(&src_mac)
+    }
+
+    pub fn set_iface_mac_raw(
+        &mut self,
+        mac: &[u8],
+    ) -> Result<&mut Self, DhcpError> {
+        if mac.len() != ETH_ALEN {
             return Err(DhcpError::new(
                 ErrorKind::NotSupported,
-                format!(
-                    "Invalid MAC address {mac}, expecting format \
-                     01:02:2a:2c:f7:04"
-                ),
+                format!("Only support ethernet MAC address({ETH_ALEN} bytes)",),
             ));
         }
-        self.src_mac.copy_from_slice(&src_mac[..ETH_ALEN]);
+        self.src_mac.copy_from_slice(&mac[..ETH_ALEN]);
         Ok(self)
     }
 
