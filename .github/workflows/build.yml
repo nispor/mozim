@@ -30,3 +30,6 @@ jobs:
 
       - name: Build test for ${{ matrix.rust_target }}
         run: cargo build --target ${{ matrix.rust_target }}
+
+      - name: Build test for ${{ matrix.rust_target }} without default feature
+        run: cargo build --target ${{ matrix.rust_target }} --no-default-features

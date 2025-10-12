@@ -99,6 +99,7 @@ impl From<std::net::AddrParseError> for DhcpError {
     }
 }
 
+#[cfg(feature = "netlink")]
 impl From<rtnetlink::Error> for DhcpError {
     fn from(e: rtnetlink::Error) -> Self {
         Self::new(ErrorKind::IoError, format!("netlink error: {e}"))

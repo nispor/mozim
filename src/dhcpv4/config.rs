@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{
-    mac::parse_mac,
-    netlink::{get_iface_index, get_iface_index_mac},
-    DhcpError, DhcpV4OptionCode, ErrorKind, ETH_ALEN,
-};
+use crate::{mac::parse_mac, DhcpError, DhcpV4OptionCode, ErrorKind, ETH_ALEN};
 
 // https://www.iana.org/assignments/arp-parameters/arp-parameters.xhtml#arp-parameters-2
 const ARP_HW_TYPE_ETHERNET: u8 = 1;
@@ -90,10 +86,11 @@ impl DhcpV4Config {
     #[cfg(feature = "netlink")]
     pub(crate) async fn resolve(&mut self) -> Result<(), DhcpError> {
         if self.is_proxy {
-            self.iface_index = get_iface_index(&self.iface_name).await?;
+            self.iface_index =
+                crate::netlink::get_iface_index(&self.iface_name).await?;
         } else {
             let (iface_index, src_mac) =
-                get_iface_index_mac(&self.iface_name).await?;
+                crate::netlink::get_iface_index_mac(&self.iface_name).await?;
 
             if src_mac.len() != ETH_ALEN {
                 return Err(DhcpError::new(
@@ -116,9 +113,11 @@ impl DhcpV4Config {
     pub(crate) async fn resolve(&mut self) -> Result<(), DhcpError> {
         Err(DhcpError::new(
             ErrorKind::InvalidArgument,
-            "Feature `netlink` not enabled, cannot resolve interface {} index \
-             and mac address, please set them manually",
-            self.iface_name,
+            format!(
+                "Feature `netlink` not enabled, cannot resolve interface {} \
+                 index and mac address, please set them manually",
+                self.iface_name,
+            ),
         ))
     }
 

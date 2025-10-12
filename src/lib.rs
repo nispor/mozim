@@ -5,6 +5,7 @@ mod dhcpv4;
 mod dhcpv6;
 mod error;
 mod mac;
+#[cfg(feature = "netlink")]
 mod netlink;
 mod time;
 
