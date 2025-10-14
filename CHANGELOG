@@ -1,4 +1,23 @@
 # Changelog
+## [0.3.0] - 2025-10-14
+### Breaking changes
+ - Rewrite to use tokio async. Massive API changes. Please check example code
+   for how to use it. (2399bba)
+
+### New features
+ - Not depending on dhcpproto any more. (3ffba62)
+
+### Bug fixes
+ - dhcpv4: Add `DhcpV4Config::set_iface_mac_raw()`. (368d944)
+ - Fix compiling error without default features. (872c5a9)
+ - dhcpv4: Unexport `DhcpV4Config.src_mac`. (6ed9c67)
+ - DHCPv6-PD: Fix T1/T2 are zero for prefix delegation. (3e65ca8)
+ - Fix DHCPv6 option parsing. (3ffba62)
+ - Prevent infinite loop. (5f90498)
+ - Fix DHCPv6 on ppp interface. (f7462b1)
+ - Parse/Emit DHCP message by ourselves. (e52bb9b)
+ - Rewrite to use tokio async. (2399bba)
+
 ## [0.2.7] - 2025-08-15
 ### Breaking changes
  - N/A
