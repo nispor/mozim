@@ -1,27 +1,33 @@
 # Mozim -- DHCP Client Library
 
-Still doing code sign, no real work this project can do yet.
-Check again in 2022.
+Example code:
 
-DONE:
- * raw socket with BPF applied and accepting all mac address.
- * DHCP discovery and request.
- * Renew, rebind.
- * DHCP IP apply via cli tool `mzc`.
- * Route
- * Timeout and retry
+```rust
+use mozim::{DhcpV4Client, DhcpV4Config, DhcpV4State};
 
-TODO:
- * Verify XID.
- * Handle vendor difference: https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/issues/848
- * Support multiple DHCP servers with `DHCPNAK` reply.
- * Support DHCPNAK
- * Support `DHCPDECLINE`: Client to server indicating network address is
-   already in use.
- * Support `DHCPINFORM`: Client to server, asking only for local configuration
-   parameters; client already has externally configured network address.
- * Rate control -- Token bucket (RFC 2698)
- * Initial sleep before discovery/solicit(need check RFC)
+const TEST_NIC: &str = "dhcpcli";
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut config = DhcpV4Config::new(TEST_NIC);
+    config.set_host_name("mozim-test");
+    config.use_host_name_as_client_id();
+    config.set_timeout_sec(300);
+    let mut cli = DhcpV4Client::init(config, None).await?;
+    let mut got_lease = None;
+
+    loop {
+        let state = cli.run().await?;
+        println!("DHCP state {state}");
+        if let DhcpV4State::Done(lease) = state {
+            println!("Got DHCPv4 lease {lease:?}");
+            got_lease = Some(lease);
+        } else {
+            println!("DHCPv4 on {TEST_NIC} enter {state}");
+        }
+    }
+}
+```
 
 # Try out
 
@@ -30,6 +36,6 @@ TODO:
 # The `eth1.ep` is DHCP server interface running dnsmasq in `mozim` network
 # namespace.
 sudo ./utils/test_env_mozim &
-cargo run --example mozim_dhcpv4_async
-cargo run --example mozim_dhcpv6_sync
+cargo run --example mozim_dhcpv4
+cargo run --example mozim_dhcpv6
 ```
