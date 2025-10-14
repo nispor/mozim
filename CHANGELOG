@@ -15,8 +15,6 @@
  - Fix DHCPv6 option parsing. (3ffba62)
  - Prevent infinite loop. (5f90498)
  - Fix DHCPv6 on ppp interface. (f7462b1)
- - Parse/Emit DHCP message by ourselves. (e52bb9b)
- - Rewrite to use tokio async. (2399bba)
 
 ## [0.2.7] - 2025-08-15
 ### Breaking changes
