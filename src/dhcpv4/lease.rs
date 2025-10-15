@@ -15,7 +15,9 @@ use crate::{
 pub struct DhcpV4Lease {
     // Required for sending DHCPRELEASE in proxy mode
     pub(crate) srv_mac: [u8; 6],
+    /// Server IP address
     pub siaddr: Ipv4Addr,
+    /// Your(Client) IP address
     pub yiaddr: Ipv4Addr,
     pub t1_sec: u32,
     pub t2_sec: u32,
@@ -181,5 +183,26 @@ impl DhcpV4Lease {
     /// leading code and length.
     pub fn get_option_raw(&self, code: u8) -> Option<Vec<u8>> {
         self.dhcp_opts.get_data_raw(code)
+    }
+
+    pub fn prefix_length(&self) -> u8 {
+        u32::from(self.subnet_mask).count_ones() as u8
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_prefix_length() {
+        assert_eq!(
+            DhcpV4Lease {
+                subnet_mask: Ipv4Addr::new(255, 255, 255, 224),
+                ..Default::default()
+            }
+            .prefix_length(),
+            27
+        )
     }
 }
