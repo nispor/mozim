@@ -29,13 +29,13 @@ pub(crate) fn gen_retransmit_time(
 
     let rt = if rt == Duration::new(0, 0) {
         Duration::from_millis(
-            (irt.as_millis() * rand::random_range(900..1100) / 1000)
+            (irt.as_millis() / 1000 * rand::random_range(900..1100))
                 .try_into()
                 .unwrap_or(u64::MAX),
         )
     } else {
         Duration::from_millis(
-            (rt.as_millis() * rand::random_range(1900..2100) / 1000)
+            (rt.as_millis() / 1000 * rand::random_range(1900..2100))
                 .try_into()
                 .unwrap_or(u64::MAX),
         )
@@ -43,7 +43,7 @@ pub(crate) fn gen_retransmit_time(
 
     if mrt != Duration::new(0, 0) && rt > mrt {
         Some(Duration::from_millis(
-            (mrt.as_millis() * rand::random_range(900..1100) / 1000)
+            (mrt.as_millis() / 1000 * rand::random_range(900..1100))
                 .try_into()
                 .unwrap_or(u64::MAX),
         ))
