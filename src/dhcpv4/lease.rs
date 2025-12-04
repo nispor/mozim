@@ -67,37 +67,6 @@ impl DhcpV4Lease {
             dhcp_opts: msg.options.clone(),
             ..Default::default()
         };
-        if let Some(DhcpV4Option::RenewalTime(v)) =
-            msg.options.get(DhcpV4OptionCode::RenewalTime)
-        {
-            ret.t1_sec = *v;
-        } else {
-            return Err(DhcpError::new(
-                ErrorKind::InvalidDhcpMessage,
-                format!("No T1 in DHCP message {msg:?}"),
-            ));
-        }
-
-        if let Some(DhcpV4Option::RebindingTime(v)) =
-            msg.options.get(DhcpV4OptionCode::RebindingTime)
-        {
-            ret.t2_sec = *v;
-        } else {
-            return Err(DhcpError::new(
-                ErrorKind::InvalidDhcpMessage,
-                format!("No T2 in DHCP message {msg:?}"),
-            ));
-        }
-        if let Some(DhcpV4Option::InterfaceMtu(v)) =
-            msg.options.get(DhcpV4OptionCode::InterfaceMtu)
-        {
-            ret.mtu = Some(*v);
-        }
-        if let Some(DhcpV4Option::ServerIdentifier(v)) =
-            msg.options.get(DhcpV4OptionCode::ServerIdentifier)
-        {
-            ret.srv_id = *v;
-        }
         if let Some(DhcpV4Option::IpAddressLeaseTime(v)) =
             msg.options.get(DhcpV4OptionCode::IpAddressLeaseTime)
         {
@@ -107,6 +76,35 @@ impl DhcpV4Lease {
                 ErrorKind::InvalidDhcpMessage,
                 format!("No lease time in DHCP message {msg:?}"),
             ));
+        }
+
+        if let Some(DhcpV4Option::RenewalTime(v)) =
+            msg.options.get(DhcpV4OptionCode::RenewalTime)
+        {
+            ret.t1_sec = *v;
+        } else {
+            // RFC 2131 says we should pick 0.5 of the lease time if no t1 option given.
+            ret.t1_sec = add_jitter(ret.lease_time_sec / 2);
+        }
+
+        if let Some(DhcpV4Option::RebindingTime(v)) =
+            msg.options.get(DhcpV4OptionCode::RebindingTime)
+        {
+            ret.t2_sec = *v;
+        } else {
+            // RFC 2131 says we should pick 0.875 of the lease time if no t1 option given.
+            ret.t2_sec = add_jitter((ret.lease_time_sec as f32 * 0.875) as u32);
+        }
+
+        if let Some(DhcpV4Option::InterfaceMtu(v)) =
+            msg.options.get(DhcpV4OptionCode::InterfaceMtu)
+        {
+            ret.mtu = Some(*v);
+        }
+        if let Some(DhcpV4Option::ServerIdentifier(v)) =
+            msg.options.get(DhcpV4OptionCode::ServerIdentifier)
+        {
+            ret.srv_id = *v;
         }
         if let Some(DhcpV4Option::SubnetMask(v)) =
             msg.options.get(DhcpV4OptionCode::SubnetMask)
@@ -190,6 +188,16 @@ impl DhcpV4Lease {
     }
 }
 
+/// Add a small random jitter of -2 to +2s to the value.
+/// It will not add jitter for values below 20s to avoid
+/// invalidating the t1 < t2 < lease time relationship.
+fn add_jitter(val: u32) -> u32 {
+    if val < 20 {
+        return val;
+    }
+    val + rand::random_range(0..4) - 2
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -204,5 +212,51 @@ mod test {
             .prefix_length(),
             27
         )
+    }
+
+    #[test]
+    fn test_dhcp_v2_lease_t1_t2() {
+        let mut opts = DhcpV4Options::new();
+        opts.insert(DhcpV4Option::IpAddressLeaseTime(100));
+        opts.insert(DhcpV4Option::RenewalTime(30));
+        opts.insert(DhcpV4Option::RebindingTime(60));
+        let msg = DhcpV4Message {
+            options: opts.clone(),
+            ..Default::default()
+        };
+        let lease = DhcpV4Lease::new_from_msg(&msg).unwrap();
+        assert_eq!(
+            lease,
+            DhcpV4Lease {
+                lease_time_sec: 100,
+                t1_sec: 30,
+                t2_sec: 60,
+                dhcp_opts: opts,
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn test_dhcp_v2_lease_default_t1_t2() {
+        let mut opts = DhcpV4Options::new();
+        opts.insert(DhcpV4Option::IpAddressLeaseTime(100));
+        let msg = DhcpV4Message {
+            options: opts,
+            ..Default::default()
+        };
+        let lease = DhcpV4Lease::new_from_msg(&msg).unwrap();
+        assert_eq!(lease.lease_time_sec, 100);
+        // exact values are random due jitter so just check the range
+        assert!(
+            lease.t1_sec >= 48 && lease.t1_sec <= 52,
+            "t1 seconds {} outside of range 48..52",
+            lease.t1_sec
+        );
+        assert!(
+            lease.t2_sec >= 85 && lease.t2_sec <= 89,
+            "t2 seconds {} outside of range 85..89",
+            lease.t2_sec
+        );
     }
 }
