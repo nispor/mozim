@@ -1,6 +1,6 @@
 [package]
 name = "mozim"
-version = "0.3.0"
+version = "0.3.1"
 description = "DHCP Client Library"
 license = "Apache-2.0"
 repository = "https://github.com/nispor/mozim"
