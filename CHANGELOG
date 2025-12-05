@@ -1,4 +1,18 @@
 # Changelog
+## [0.3.1] - 2025-12-05
+### Breaking changes
+ - N/A
+
+### New features
+ - N/A
+
+### Bug fixes
+ - treat t1 and t2 as optional. (2ad9dbc)
+ - DHCPv6: Prevent multiply overflow. (64b4198)
+ - DHCPv4: Add `DhcpV4Lease.prefix_length()`. (658c9f8)
+ - Remove incorrect line in CHANGELOG. (0ddf436)
+ - README: Fix example code in README. (8e15bcd)
+
 ## [0.3.0] - 2025-10-14
 ### Breaking changes
  - Rewrite to use tokio async. Massive API changes. Please check example code
