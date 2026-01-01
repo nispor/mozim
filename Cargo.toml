@@ -16,7 +16,7 @@ libc = "0.2.132"
 log = "0.4.17"
 etherparse = "0.19.0"
 nix = { version = "0.30", features = ["poll", "time", "event", "socket", "fs"] }
-rtnetlink = { version = "0.19.0", optional = true }
+rtnetlink = { version = "0.20.0", optional = true }
 tokio = { version = "1.19", features = ["macros", "rt", "net", "time"] }
 
 [dependencies.futures]
