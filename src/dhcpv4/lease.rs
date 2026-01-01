@@ -83,7 +83,8 @@ impl DhcpV4Lease {
         {
             ret.t1_sec = *v;
         } else {
-            // RFC 2131 says we should pick 0.5 of the lease time if no t1 option given.
+            // RFC 2131 says we should pick 0.5 of the lease time if no t1
+            // option given.
             ret.t1_sec = add_jitter(ret.lease_time_sec / 2);
         }
 
@@ -92,7 +93,8 @@ impl DhcpV4Lease {
         {
             ret.t2_sec = *v;
         } else {
-            // RFC 2131 says we should pick 0.875 of the lease time if no t1 option given.
+            // RFC 2131 says we should pick 0.875 of the lease time if no t1
+            // option given.
             ret.t2_sec = add_jitter((ret.lease_time_sec as f32 * 0.875) as u32);
         }
 
