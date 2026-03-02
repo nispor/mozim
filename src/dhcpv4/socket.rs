@@ -219,13 +219,10 @@ fn bind_raw_socket(
             std::mem::size_of::<libc::sockaddr_ll>() as libc::socklen_t,
         ) {
             0 => Ok(()),
-            rc => {
-                libc::close(fd);
-                Err(DhcpError::new(
-                    ErrorKind::Bug,
-                    format!("Failed to bind socket: {rc}"),
-                ))
-            }
+            rc => Err(DhcpError::new(
+                ErrorKind::Bug,
+                format!("Failed to bind socket: {rc}"),
+            )),
         }
     }
 }
