@@ -31,6 +31,9 @@ pub struct DhcpV4Lease {
     pub mtu: Option<u16>,
     pub host_name: Option<String>,
     pub domain_name: Option<String>,
+    /// According to RFC 3442, once `Classless Static Routes` option is
+    /// defined, DHCP client should ignore `Router` option. Hence if this
+    /// properties is defined(not None), please do not use `gateways` property.
     pub classless_routes: Option<Vec<DhcpV4ClasslessRoute>>,
     dhcp_opts: DhcpV4Options,
 }
