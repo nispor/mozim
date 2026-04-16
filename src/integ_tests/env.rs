@@ -7,6 +7,8 @@ use std::{
     str::FromStr,
 };
 
+const UDHCPD_CONF: &str = "/tmp/mozim_test_udhcpd.conf";
+const UDHCPD_PID_FILE_PATH: &str = "/tmp/mozim_test_udhcpd.pid";
 const PID_FILE_PATH: &str = "/tmp/mozim_test_dnsmasq_pid";
 const TEST_DHCPD_NETNS: &str = "mozim_test";
 const LOG_FILE: &str = "/tmp/mozim_test_dnsmasq_log";
@@ -16,6 +18,7 @@ pub(crate) const TEST_PROXY_MAC1: &str = "00:11:22:33:44:55";
 const TEST_NIC_SRV: &str = "dhcpsrv";
 
 const TEST_DHCP_SRV_IP: &str = "192.0.2.1";
+pub(crate) const TEST_DHCP_SRV_ADDR: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
 const TEST_DHCP_SRV_IPV6: &str = "2001:db8:a::1";
 pub(crate) const TEST_CLS_DST: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 0);
 pub(crate) const TEST_CLS_DST_LEN: u8 = 24;
@@ -136,6 +139,71 @@ fn stop_dhcp_server() {
     run_cmd_ignore_failure(&format!("kill {pid}"));
 }
 
+fn write_udhcpd_conf() {
+    std::fs::write(
+        UDHCPD_CONF,
+        format!(
+            r#"
+start       192.0.2.100
+end         192.0.2.100
+interface   {TEST_NIC_SRV}
+
+option  subnet 255.255.255.0
+option  router {TEST_DHCP_SRV_IP}
+option  dns    8.8.8.8
+
+lease_file  /tmp/mozim_test_udhcpd.leases
+pidfile     /tmp/mozim_test_udhcpd.pid
+opt lease   10
+no_ping
+"#
+        ),
+    )
+    .unwrap();
+}
+
+fn start_udhcpd() {
+    write_udhcpd_conf();
+
+    Command::new("ip")
+        .args([
+            "netns",
+            "exec",
+            TEST_DHCPD_NETNS,
+            "busybox",
+            "udhcpd",
+            UDHCPD_CONF,
+        ])
+        .spawn()
+        .expect("Failed to start udhcpd")
+        .wait()
+        .ok();
+    // Need to wait 1 seconds for udhcpd to finish its start
+    std::thread::sleep(std::time::Duration::from_secs(1));
+}
+
+fn stop_udhcpd() {
+    if !std::path::Path::new(UDHCPD_PID_FILE_PATH).exists() {
+        log::warn!("PID file {UDHCPD_PID_FILE_PATH} does not exist");
+        return;
+    }
+    let mut fd =
+        std::fs::File::open(UDHCPD_PID_FILE_PATH).unwrap_or_else(|_| {
+            panic!("Failed to open {UDHCPD_PID_FILE_PATH} file")
+        });
+    let mut contents = String::new();
+    fd.read_to_string(&mut contents).unwrap_or_else(|_| {
+        panic!("Failed to read {UDHCPD_PID_FILE_PATH} file")
+    });
+
+    let pid = u32::from_str(contents.trim())
+        .unwrap_or_else(|_| panic!("Invalid PID content {contents}"));
+
+    run_cmd_ignore_failure(&format!("kill {pid}"));
+
+    run_cmd_ignore_failure("killall udhcpd");
+}
+
 fn run_cmd(cmd: &str) -> String {
     let cmds: Vec<&str> = cmd.split(' ').collect();
     String::from_utf8(
@@ -160,6 +228,10 @@ fn run_cmd_ignore_failure(cmd: &str) -> String {
     }
 }
 
+pub(crate) fn set_client_ip(address: Ipv4Addr) {
+    run_cmd(&format!("ip addr add {address}/24 dev {TEST_NIC_CLI}",));
+}
+
 pub(crate) fn with_dhcp_env<T>(test: T)
 where
     T: FnOnce() + std::panic::UnwindSafe,
@@ -177,6 +249,25 @@ where
     remove_test_veth_nics();
     remove_test_net_namespace();
     assert!(result.is_ok())
+}
+
+pub(crate) fn with_udhcpd_env<T>(test: T)
+where
+    T: FnOnce() + std::panic::UnwindSafe,
+{
+    create_test_net_namespace();
+    create_test_veth_nics();
+
+    stop_udhcpd();
+    start_udhcpd();
+
+    let result = std::panic::catch_unwind(test);
+
+    stop_udhcpd();
+    remove_test_veth_nics();
+    remove_test_net_namespace();
+
+    assert!(result.is_ok());
 }
 
 pub(crate) fn init_log() {

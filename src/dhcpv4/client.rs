@@ -197,7 +197,7 @@ impl DhcpV4Client {
                     DhcpUdpV4Socket::new(
                         self.config.iface_name.as_str(),
                         lease.yiaddr,
-                        lease.siaddr,
+                        lease.srv_id,
                     )
                     .await?,
                 );

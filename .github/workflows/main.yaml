@@ -37,9 +37,9 @@ jobs:
 
     steps:
     - name: Install packages
-      run:  sudo apt-get -y install dnsmasq
+      run:  sudo apt-get -y install dnsmasq busybox
 
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v6
 
     - name: Install Rust stable
       run: rustup default stable

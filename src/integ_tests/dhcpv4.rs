@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::env::{
-    init_log, with_dhcp_env, FOO1_HOSTNAME,
+    init_log, set_client_ip, with_dhcp_env, with_udhcpd_env, FOO1_HOSTNAME,
     FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID, TEST_CLS_DST, TEST_CLS_DST_LEN,
-    TEST_CLS_RT_ADDR, TEST_NIC_CLI,
+    TEST_CLS_RT_ADDR, TEST_DHCP_SRV_ADDR, TEST_NIC_CLI,
 };
 use crate::{
     DhcpV4ClasslessRoute, DhcpV4Client, DhcpV4Config, DhcpV4Lease, DhcpV4State,
 };
+use std::net::Ipv4Addr;
+use tokio::time::{timeout, Duration};
 
 const FOO2_HOSTNAME: &str = "foo2";
 
@@ -50,6 +52,68 @@ fn test_dhcpv4() {
             );
         }
     })
+}
+
+#[test]
+fn test_dhcpv4_unicast_renew_uses_srv_id() {
+    // test with udhcpd from busybox. Its a quite old server implementation
+    // but simple and reliable. It does not set siaddr automatically like
+    // dnsmasq which makes it a good candidate for a renew test so see that
+    // srv_id is used for the unicast renew and not siaddr.
+    init_log();
+
+    with_udhcpd_env(|| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .enable_io()
+            .build()
+            .unwrap();
+
+        rt.block_on(async {
+            let cfg = DhcpV4Config::new(TEST_NIC_CLI);
+            let mut cli = DhcpV4Client::init(cfg, None).await.unwrap();
+
+            let lease = loop {
+                if let DhcpV4State::Done(l) = cli.run().await.unwrap() {
+                    break l;
+                }
+            };
+
+            assert_eq!(lease.srv_id, TEST_DHCP_SRV_ADDR);
+            assert_eq!(lease.yiaddr, Ipv4Addr::new(192, 0, 2, 100));
+            set_client_ip(lease.yiaddr);
+
+            // Wait until we are safely past T1 (50% lease time)
+            tokio::time::sleep(Duration::from_secs(6)).await;
+
+            // Renew phase
+            let state = cli.run().await.unwrap();
+            assert_eq!(state, DhcpV4State::Renewing);
+
+            // Observe outcome, timeout is fine, but we should never get so Rebinding
+            // (rebinding happens when renew fails, rebinding will use broadcast again like
+            // the first discovery)
+            let _ = timeout(Duration::from_secs(4), async {
+                loop {
+                    let state = cli.run().await.unwrap();
+
+                    match state {
+                        // Rebinding would happen on T2 = 85% lease time
+                        DhcpV4State::Rebinding => {
+                            panic!("entered Rebinding state – Renew via srv_id failed");
+                        }
+                        DhcpV4State::Renewing => {
+                            // still fine, keep polling
+                        }
+                        other => {
+                            log::debug!("Received unused dhcp state: {other:?}")
+                        }
+                    }
+                }
+            })
+            .await;
+        });
+    });
 }
 
 async fn get_lease() -> Option<DhcpV4Lease> {

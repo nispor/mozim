@@ -178,7 +178,9 @@ impl DhcpV4Lease {
                 "Invalid DHCP lease: T2 is bigger than lease time".to_string(),
             ));
         }
-
+        if self.srv_id.is_unspecified() {
+            log::warn!("Server identifier unspecified (Option 54). Check your DHCP server, unicast renew will not work");
+        }
         Ok(())
     }
 
