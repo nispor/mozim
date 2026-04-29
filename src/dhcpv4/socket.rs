@@ -2,16 +2,19 @@
 
 use std::{
     ffi::CString,
+    fs::File,
     future::Future,
-    net::Ipv4Addr,
+    marker::PhantomData,
+    net::{Ipv4Addr, UdpSocket as StdUdpSocket},
     os::{
-        fd::{AsRawFd, OwnedFd},
+        fd::{AsFd, AsRawFd, OwnedFd},
         unix::io::RawFd,
     },
 };
 
 use nix::{
     errno::Errno,
+    sched::{setns, CloneFlags},
     sys::socket::{AddressFamily, MsgFlags, SockFlag, SockProtocol, SockType},
 };
 use tokio::{io::unix::AsyncFd, net::UdpSocket};
@@ -96,27 +99,41 @@ pub(crate) struct DhcpRawSocket {
 
 impl DhcpRawSocket {
     pub(crate) fn new(config: &DhcpV4Config) -> Result<Self, DhcpError> {
-        let iface_index = config.iface_index as libc::c_int;
-        let fd = create_raw_eth_socket()?;
-
-        apply_dhcp_bpf(fd.as_raw_fd())?;
-
-        bind_raw_socket(
-            fd.as_raw_fd(),
-            libc::ETH_P_ALL,
-            iface_index,
-            &config.src_mac,
-        )?;
-
-        if config.is_proxy {
-            enable_promiscuous_mode(fd.as_raw_fd(), iface_index)?;
-        }
+        let fd = create_bound_raw_eth_socket(config)?;
 
         log::debug!("Raw socket created {}", fd.as_raw_fd());
         Ok(DhcpRawSocket {
             fd: AsyncFd::new(fd)?,
         })
     }
+}
+
+fn create_bound_raw_eth_socket(
+    config: &DhcpV4Config,
+) -> Result<OwnedFd, DhcpError> {
+    let _netns_guard =
+        if let Some(netns_path) = config.socket_netns_path.as_deref() {
+            Some(NetnsGuard::enter(netns_path)?)
+        } else {
+            None
+        };
+    let iface_index = config.iface_index as libc::c_int;
+    let fd = create_raw_eth_socket()?;
+
+    apply_dhcp_bpf(fd.as_raw_fd())?;
+
+    bind_raw_socket(
+        fd.as_raw_fd(),
+        libc::ETH_P_ALL,
+        iface_index,
+        &config.src_mac,
+    )?;
+
+    if config.is_proxy {
+        enable_promiscuous_mode(fd.as_raw_fd(), iface_index)?;
+    }
+
+    Ok(fd)
 }
 
 impl DhcpV4Socket for DhcpRawSocket {
@@ -237,15 +254,16 @@ impl DhcpUdpV4Socket {
         iface_name: &str,
         src_ip: Ipv4Addr,
         dst_ip: Ipv4Addr,
+        socket_netns_path: Option<&str>,
     ) -> Result<Self, DhcpError> {
         log::debug!(
             "Creating UDP socket from {src_ip}:{} to {dst_ip}:{}",
             CLIENT_PORT,
             SERVER_PORT
         );
-        let socket = UdpSocket::bind((src_ip, CLIENT_PORT)).await?;
-        bind_socket_to_iface(socket.as_raw_fd(), iface_name)?;
-        socket.connect((dst_ip, SERVER_PORT)).await?;
+        let socket =
+            create_udp_socket(iface_name, src_ip, dst_ip, socket_netns_path)?;
+        let socket = UdpSocket::from_std(socket)?;
         log::debug!("Finished UDP socket creation");
 
         Ok(Self { socket })
@@ -274,6 +292,24 @@ impl DhcpV4Socket for DhcpUdpV4Socket {
     }
 }
 
+fn create_udp_socket(
+    iface_name: &str,
+    src_ip: Ipv4Addr,
+    dst_ip: Ipv4Addr,
+    socket_netns_path: Option<&str>,
+) -> Result<StdUdpSocket, DhcpError> {
+    let _netns_guard = if let Some(netns_path) = socket_netns_path {
+        Some(NetnsGuard::enter(netns_path)?)
+    } else {
+        None
+    };
+    let socket = StdUdpSocket::bind((src_ip, CLIENT_PORT))?;
+    bind_socket_to_iface(socket.as_raw_fd(), iface_name)?;
+    socket.connect((dst_ip, SERVER_PORT))?;
+    socket.set_nonblocking(true)?;
+    Ok(socket)
+}
+
 fn bind_socket_to_iface(fd: RawFd, iface_name: &str) -> Result<(), DhcpError> {
     let iface_name_cstr = CString::new(iface_name)?;
 
@@ -283,7 +319,7 @@ fn bind_socket_to_iface(fd: RawFd, iface_name: &str) -> Result<(), DhcpError> {
             libc::SOL_SOCKET,
             libc::SO_BINDTODEVICE,
             iface_name_cstr.as_ptr() as *const libc::c_void,
-            std::mem::size_of::<CString>() as libc::socklen_t,
+            iface_name_cstr.as_bytes_with_nul().len() as libc::socklen_t,
         );
         if rc != 0 {
             return Err(DhcpError::new(
@@ -297,4 +333,55 @@ fn bind_socket_to_iface(fd: RawFd, iface_name: &str) -> Result<(), DhcpError> {
         }
     }
     Ok(())
+}
+
+struct NetnsGuard {
+    host_netns: File,
+    // Prevent Send so this guard cannot be held across await points.
+    // setns() only affects the calling thread; moving across threads would
+    // silently switch the wrong thread's namespace.
+    _not_send: PhantomData<*const ()>,
+}
+
+impl NetnsGuard {
+    // This switches only the current thread and must not be held across await.
+    fn enter(netns_path: &str) -> Result<Self, DhcpError> {
+        let host_netns = File::open("/proc/self/ns/net").map_err(|e| {
+            DhcpError::new(
+                ErrorKind::IoError,
+                format!("Failed to open current network namespace: {e}"),
+            )
+        })?;
+        let target_netns = File::open(netns_path).map_err(|e| {
+            DhcpError::new(
+                ErrorKind::IoError,
+                format!(
+                    "Failed to open socket network namespace {netns_path}: {e}"
+                ),
+            )
+        })?;
+
+        setns(target_netns.as_fd(), CloneFlags::CLONE_NEWNET).map_err(|e| {
+            DhcpError::new(
+                ErrorKind::IoError,
+                format!(
+                    "Failed to join socket network namespace {netns_path}: {e}"
+                ),
+            )
+        })?;
+
+        Ok(Self {
+            host_netns,
+            _not_send: PhantomData,
+        })
+    }
+}
+
+impl Drop for NetnsGuard {
+    fn drop(&mut self) {
+        if let Err(e) = setns(self.host_netns.as_fd(), CloneFlags::CLONE_NEWNET)
+        {
+            log::error!("Failed to restore original network namespace: {e}");
+        }
+    }
 }

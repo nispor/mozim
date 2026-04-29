@@ -3,6 +3,8 @@
 #[cfg(test)]
 mod dhcpv4;
 #[cfg(test)]
+mod dhcpv4_netns;
+#[cfg(test)]
 mod dhcpv4_proxy;
 #[cfg(test)]
 mod dhcpv6;

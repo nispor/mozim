@@ -9,6 +9,9 @@ use std::{
 
 const PID_FILE_PATH: &str = "/tmp/mozim_test_dnsmasq_pid";
 const TEST_DHCPD_NETNS: &str = "mozim_test";
+const TEST_DHCP_CLI_NETNS: &str = "mozim_test_client";
+pub(crate) const TEST_DHCP_CLI_NETNS_PATH: &str =
+    "/var/run/netns/mozim_test_client";
 const LOG_FILE: &str = "/tmp/mozim_test_dnsmasq_log";
 pub(crate) const TEST_NIC_CLI: &str = "dhcpcli";
 const TEST_NIC_CLI_MAC: &str = "00:23:45:67:89:1a";
@@ -36,8 +39,16 @@ fn create_test_net_namespace() {
     run_cmd(&format!("ip netns add {TEST_DHCPD_NETNS}"));
 }
 
+fn create_test_client_net_namespace() {
+    run_cmd(&format!("ip netns add {TEST_DHCP_CLI_NETNS}"));
+}
+
 fn remove_test_net_namespace() {
     run_cmd_ignore_failure(&format!("ip netns del {TEST_DHCPD_NETNS}"));
+}
+
+fn remove_test_client_net_namespace() {
+    run_cmd_ignore_failure(&format!("ip netns del {TEST_DHCP_CLI_NETNS}"));
 }
 
 fn create_test_veth_nics() {
@@ -64,8 +75,23 @@ fn create_test_veth_nics() {
     std::thread::sleep(std::time::Duration::from_secs(2));
 }
 
+fn move_test_client_nic_to_namespace() {
+    run_cmd(&format!(
+        "ip link set {TEST_NIC_CLI} netns {TEST_DHCP_CLI_NETNS}",
+    ));
+    run_cmd(&format!(
+        "ip netns exec {TEST_DHCP_CLI_NETNS} ip link set {TEST_NIC_CLI} up",
+    ));
+}
+
 fn remove_test_veth_nics() {
     run_cmd_ignore_failure(&format!("ip link del {TEST_NIC_CLI}"));
+}
+
+fn remove_test_client_veth_nics() {
+    run_cmd_ignore_failure(&format!(
+        "ip netns exec {TEST_DHCP_CLI_NETNS} ip link del {TEST_NIC_CLI}"
+    ));
 }
 
 fn start_dhcp_server() {
@@ -177,6 +203,45 @@ where
     remove_test_veth_nics();
     remove_test_net_namespace();
     assert!(result.is_ok())
+}
+
+pub(crate) fn with_dhcp_client_netns_env<T>(test: T)
+where
+    T: FnOnce() + std::panic::UnwindSafe,
+{
+    stop_dhcp_server();
+    remove_test_client_veth_nics();
+    remove_test_veth_nics();
+    remove_test_client_net_namespace();
+    remove_test_net_namespace();
+
+    create_test_net_namespace();
+    create_test_client_net_namespace();
+    create_test_veth_nics();
+    move_test_client_nic_to_namespace();
+    stop_dhcp_server();
+    start_dhcp_server();
+
+    let result = std::panic::catch_unwind(|| {
+        test();
+    });
+
+    stop_dhcp_server();
+    remove_test_client_veth_nics();
+    remove_test_veth_nics();
+    remove_test_client_net_namespace();
+    remove_test_net_namespace();
+    assert!(result.is_ok())
+}
+
+pub(crate) fn test_client_iface_index() -> u32 {
+    run_cmd(&format!(
+        "ip netns exec {TEST_DHCP_CLI_NETNS} cat \
+         /sys/class/net/{TEST_NIC_CLI}/ifindex"
+    ))
+    .trim()
+    .parse()
+    .unwrap_or_else(|e| panic!("failed to parse {TEST_NIC_CLI} ifindex: {e}"))
 }
 
 pub(crate) fn init_log() {

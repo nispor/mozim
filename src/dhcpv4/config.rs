@@ -12,6 +12,8 @@ pub struct DhcpV4Config {
     pub iface_name: String,
     /// Interface index to run DHCP against.
     pub iface_index: u32,
+    /// Optional Linux network namespace path used when DHCP sockets are opened.
+    pub socket_netns_path: Option<String>,
     /// MAC address of interface or proxy.
     pub(crate) src_mac: [u8; ETH_ALEN],
     pub(crate) client_id: Vec<u8>,
@@ -31,6 +33,7 @@ impl Default for DhcpV4Config {
         Self {
             iface_name: String::new(),
             iface_index: 0,
+            socket_netns_path: None,
             src_mac: [0u8; ETH_ALEN],
             client_id: Vec::new(),
             host_name: String::new(),
@@ -61,6 +64,11 @@ impl DhcpV4Config {
 
     pub fn set_iface_index(&mut self, index: u32) -> &mut Self {
         self.iface_index = index;
+        self
+    }
+
+    pub fn set_socket_netns_path(&mut self, path: Option<String>) -> &mut Self {
+        self.socket_netns_path = path;
         self
     }
 

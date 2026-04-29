@@ -198,6 +198,7 @@ impl DhcpV4Client {
                         self.config.iface_name.as_str(),
                         lease.yiaddr,
                         lease.siaddr,
+                        self.config.socket_netns_path.as_deref(),
                     )
                     .await?,
                 );
