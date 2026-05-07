@@ -99,7 +99,7 @@ impl DhcpV4Client {
                         ErrorKind::Timeout,
                         format!(
                             "Timeout on acquiring DHCPv4 lease on {}",
-                            &self.config.iface_name
+                            self.config.iface_name
                         )
                     );
                     self.error = Some(e.clone());
