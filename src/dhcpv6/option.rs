@@ -53,6 +53,7 @@ impl DhcpV6Options {
     pub(crate) fn parse(buf: &mut Buffer) -> Result<Self, DhcpError> {
         let mut ret = Self::new();
         while !buf.is_empty() {
+            let remain_len = buf.remain_len();
             match DhcpV6Option::parse(buf) {
                 Ok(opt) => {
                     ret.insert(opt);
@@ -61,7 +62,17 @@ impl DhcpV6Options {
                     log::info!(
                         "Ignore DHCPv6 option due to parsing error: {e}"
                     );
-                    continue;
+                    // Stop when the failed parsing did not consume any
+                    // byte, otherwise this loop will never end on
+                    // malformed data.
+                    if buf.remain_len() == remain_len {
+                        log::info!(
+                            "Stop parsing DHCPv6 options due to malformed \
+                             data: {:?}",
+                            buf.get_remains()
+                        );
+                        break;
+                    }
                 }
             }
         }
@@ -647,5 +658,61 @@ impl DhcpV6OptionNtpServer {
                 buf.write_bytes(v.as_slice());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::{sync::mpsc, thread, time::Duration};
+
+    use super::*;
+
+    // Run `DhcpV6Options::parse()` in a thread guarded by a watchdog so
+    // that a regression into the infinite loop on malformed data fails
+    // the test instead of hanging the whole test run.
+    fn parse_options(raw: &[u8]) -> DhcpV6Options {
+        let raw = raw.to_vec();
+        let (tx, rx) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            let mut buf = Buffer::new(raw.as_slice());
+            let ret = DhcpV6Options::parse(&mut buf);
+            tx.send(()).unwrap();
+            ret
+        });
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("DhcpV6Options::parse() hang on malformed data");
+        handle
+            .join()
+            .unwrap()
+            .expect("DhcpV6Options::parse() failed on malformed data")
+    }
+
+    #[test]
+    fn parse_truncated_option_code_not_hang() {
+        let opts = parse_options(&[0x00]);
+        assert!(opts.get_first(DhcpV6OptionCode::ElapsedTime).is_none());
+    }
+
+    #[test]
+    fn parse_truncated_option_len_not_hang() {
+        let opts = parse_options(&[0x00, 0x01, 0x00]);
+        assert!(opts.get_first(DhcpV6OptionCode::ElapsedTime).is_none());
+    }
+
+    #[test]
+    fn parse_overlong_option_len_not_hang() {
+        let opts = parse_options(&[0x00, 0x17, 0xff, 0xff, 0x01, 0x02]);
+        assert!(opts.get_first(DhcpV6OptionCode::ElapsedTime).is_none());
+    }
+
+    #[test]
+    fn parse_malformed_tail_keeps_valid_options() {
+        // OPTION_ELAPSED_TIME(8) with value 100 followed by a
+        // truncated trailing option code.
+        let opts = parse_options(&[0x00, 0x08, 0x00, 0x02, 0x00, 0x64, 0x00]);
+        assert_eq!(
+            opts.get_first(DhcpV6OptionCode::ElapsedTime),
+            Some(&DhcpV6Option::ElapsedTime(100))
+        );
     }
 }
