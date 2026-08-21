@@ -153,10 +153,12 @@ impl DhcpV4Lease {
         }
 
         if ret.classless_routes.is_none() {
-            if let Some(raw) = msg.options.get_data_raw(
-                DhcpV4OptionCode::MS_CLASSLESS_STATIC_ROUTE.into(),
-            ) {
-                if let Ok(v) = DhcpV4ClasslessRoutes::parse(raw.as_slice()) {
+            if let Some(DhcpV4Option::Unknown(unk_opt)) =
+                msg.options.get(DhcpV4OptionCode::MS_CLASSLESS_STATIC_ROUTE)
+            {
+                if let Ok(v) =
+                    DhcpV4ClasslessRoutes::parse(unk_opt.data.as_slice())
+                {
                     ret.classless_routes = Some(v);
                 }
             }
@@ -179,13 +181,16 @@ impl DhcpV4Lease {
             ));
         }
         if self.srv_id.is_unspecified() {
-            log::warn!("Server identifier unspecified (Option 54). Check your DHCP server, unicast renew will not work");
+            log::warn!(
+                "Server identifier unspecified (Option 54). Check your DHCP \
+                 server, unicast renew will not work"
+            );
         }
         Ok(())
     }
 
-    /// Return the raw data of specified DHCP option without
-    /// leading code and length.
+    /// Return the raw data of specified DHCP option containing
+    /// leading code and length(if available) also.
     pub fn get_option_raw(&self, code: u8) -> Option<Vec<u8>> {
         self.dhcp_opts.get_data_raw(code)
     }
@@ -208,6 +213,7 @@ fn add_jitter(val: u32) -> u32 {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::DhcpV4OptionUnknown;
 
     #[test]
     fn test_prefix_length() {
@@ -265,5 +271,44 @@ mod test {
             "t2 seconds {} outside of range 85..89",
             lease.t2_sec
         );
+    }
+
+    #[test]
+    fn test_dhcp_v4_lease_ms_classless_route() {
+        let mut opts = DhcpV4Options::new();
+        opts.insert(DhcpV4Option::IpAddressLeaseTime(100));
+        opts.insert(DhcpV4Option::Unknown(DhcpV4OptionUnknown {
+            code: u8::from(DhcpV4OptionCode::MS_CLASSLESS_STATIC_ROUTE),
+            data: vec![24, 203, 0, 113, 192, 0, 2, 40],
+        }));
+        let msg = DhcpV4Message {
+            options: opts,
+            ..Default::default()
+        };
+        let lease = DhcpV4Lease::new_from_msg(&msg).unwrap();
+        assert_eq!(
+            lease.classless_routes,
+            Some(vec![DhcpV4ClasslessRoute {
+                destination: Ipv4Addr::new(203, 0, 113, 0),
+                prefix_length: 24,
+                router: Ipv4Addr::new(192, 0, 2, 40),
+            }])
+        );
+    }
+
+    #[test]
+    fn test_dhcp_v4_lease_ms_classless_route_invalid_prefix() {
+        let mut opts = DhcpV4Options::new();
+        opts.insert(DhcpV4Option::IpAddressLeaseTime(100));
+        opts.insert(DhcpV4Option::Unknown(DhcpV4OptionUnknown {
+            code: u8::from(DhcpV4OptionCode::MS_CLASSLESS_STATIC_ROUTE),
+            data: vec![33, 203, 0, 113, 192, 0, 2, 40],
+        }));
+        let msg = DhcpV4Message {
+            options: opts,
+            ..Default::default()
+        };
+        let lease = DhcpV4Lease::new_from_msg(&msg).unwrap();
+        assert_eq!(lease.classless_routes, None);
     }
 }

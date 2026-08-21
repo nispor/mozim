@@ -3,7 +3,7 @@
 use std::{cmp::Ordering, collections::HashMap, net::Ipv4Addr};
 
 use super::msg::DhcpV4MessageType;
-use crate::{Buffer, BufferMut, DhcpError, ErrorContext};
+use crate::{Buffer, BufferMut, DhcpError, ErrorContext, ErrorKind};
 
 /// DHCPv4 Option code(u8) defined by RFC 2132
 #[derive(Debug, PartialEq, Clone, Copy, Eq, Hash)]
@@ -492,7 +492,16 @@ impl DhcpV4ClasslessRoute {
                 buf.get_u8().context(err_str)?,
                 0,
             ),
-            _ => buf.get_ipv4().context(err_str)?,
+            25..=32 => buf.get_ipv4().context(err_str)?,
+            _ => {
+                return Err(DhcpError::new(
+                    ErrorKind::InvalidDhcpMessage,
+                    format!(
+                        "Invalid DHCPv4 classless static route prefix length \
+                         {prefix_length}, should be 0 - 32"
+                    ),
+                ));
+            }
         };
 
         Ok(Self {
@@ -551,4 +560,53 @@ impl DhcpV4ClasslessRoutes {
 pub struct DhcpV4OptionUnknown {
     pub code: u8,
     pub data: Vec<u8>,
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_parse_classless_route_reject_prefix_over_32() {
+        assert!(DhcpV4ClasslessRoutes::parse(&[
+            33, 203, 0, 113, 192, 0, 2, 40
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn test_parse_classless_routes() {
+        // default route via 192.0.2.1 + 203.0.113.0/24 via 192.0.2.40
+        assert_eq!(
+            DhcpV4ClasslessRoutes::parse(&[
+                0, 192, 0, 2, 1, 24, 203, 0, 113, 192, 0, 2, 40
+            ])
+            .unwrap(),
+            vec![
+                DhcpV4ClasslessRoute {
+                    destination: Ipv4Addr::UNSPECIFIED,
+                    prefix_length: 0,
+                    router: Ipv4Addr::new(192, 0, 2, 1),
+                },
+                DhcpV4ClasslessRoute {
+                    destination: Ipv4Addr::new(203, 0, 113, 0),
+                    prefix_length: 24,
+                    router: Ipv4Addr::new(192, 0, 2, 40),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_get_data_raw_with_code_and_length() {
+        let mut opts = DhcpV4Options::new();
+        opts.insert(DhcpV4Option::Unknown(DhcpV4OptionUnknown {
+            code: 249,
+            data: vec![24, 203, 0, 113, 192, 0, 2, 40],
+        }));
+        assert_eq!(
+            opts.get_data_raw(249).unwrap(),
+            vec![249, 8, 24, 203, 0, 113, 192, 0, 2, 40]
+        );
+    }
 }
