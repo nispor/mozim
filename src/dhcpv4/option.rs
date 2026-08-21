@@ -317,20 +317,25 @@ impl DhcpV4Option {
         match self {
             Self::Pad | Self::End => (),
             Self::HostName(s) | Self::DomainName(s) | Self::Message(s) => {
-                let len = s.len() + 1;
-                let len = if len > u8::MAX as usize {
+                // RFC 2132 section 2: the length octet covers the data
+                // octets only, and NVT ASCII options SHOULD NOT carry a
+                // trailing NULL.
+                let mut data = s.as_bytes();
+                if data.len() > u8::MAX as usize {
                     log::warn!(
                         "The value of DHCPv4 option {} has exceeded the \
-                         maximum length 254, truncating: {s}",
-                        u8::from(self.code())
+                         maximum length {}, truncating: {s}",
+                        u8::from(self.code()),
+                        u8::MAX,
                     );
-                    u8::MAX
-                } else {
-                    len as u8
-                };
-
-                buf.write_u8(len);
-                buf.write_string_with_null(s.as_str(), u8::MAX.into());
+                    let mut end = u8::MAX as usize;
+                    while !s.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    data = &data[..end];
+                }
+                buf.write_u8(data.len() as u8);
+                buf.write_bytes(data);
             }
             Self::MessageType(t) => {
                 buf.write_u8(1);
@@ -608,5 +613,62 @@ mod test {
             opts.get_data_raw(249).unwrap(),
             vec![249, 8, 24, 203, 0, 113, 192, 0, 2, 40]
         );
+    }
+
+    #[test]
+    fn test_emit_string_option_rfc_2132_conform() {
+        for (opt, payload) in [
+            (
+                DhcpV4Option::HostName("mozim-test".to_string()),
+                "mozim-test",
+            ),
+            (
+                DhcpV4Option::DomainName("example.com".to_string()),
+                "example.com",
+            ),
+            (DhcpV4Option::Message("declined".to_string()), "declined"),
+        ] {
+            let mut buf = BufferMut::new();
+            opt.emit(&mut buf);
+            assert_eq!(buf.data[0], u8::from(opt.code()));
+            assert_eq!(
+                buf.data[1] as usize,
+                payload.len(),
+                "Length octet of option {} should be {} but got {}",
+                u8::from(opt.code()),
+                payload.len(),
+                buf.data[1]
+            );
+            assert_eq!(
+                &buf.data[2..],
+                payload.as_bytes(),
+                "Payload of option {} should have no padding or trailing NULL",
+                u8::from(opt.code())
+            );
+        }
+    }
+
+    #[test]
+    fn test_string_option_round_trip() {
+        for opt in [
+            DhcpV4Option::HostName("mozim-test".to_string()),
+            DhcpV4Option::DomainName("example.com".to_string()),
+            DhcpV4Option::Message("declined".to_string()),
+        ] {
+            let mut buf = BufferMut::new();
+            opt.emit(&mut buf);
+            let mut read_buf = Buffer::new(buf.data.as_slice());
+            assert_eq!(DhcpV4Option::parse(&mut read_buf).unwrap(), opt);
+        }
+    }
+
+    #[test]
+    fn test_emit_overlong_string_truncated_to_255() {
+        let opt = DhcpV4Option::HostName("a".repeat(300));
+        let mut buf = BufferMut::new();
+        opt.emit(&mut buf);
+        assert_eq!(buf.data[0], u8::from(opt.code()));
+        assert_eq!(buf.data[1], u8::MAX);
+        assert_eq!(buf.data.len(), 2 + u8::MAX as usize);
     }
 }
