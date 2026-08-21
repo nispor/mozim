@@ -53,7 +53,11 @@ impl DhcpV4Client {
     //      The retransmission delay SHOULD be doubled with subsequent
     //      retransmissions up to a maximum of 64 seconds.
     pub(crate) fn discovery_max_wait_time(&self) -> Duration {
-        let mut base = 2u64.pow(self.retry_count + 2) - 1;
+        // Cap the exponent before `pow()`, otherwise it overflows when
+        // `retry_count` >= 62. The cap is chosen so that the result is
+        // unchanged for any `retry_count` < 62: the base is capped at 62
+        // below anyway.
+        let mut base = 2u64.pow(self.retry_count.min(4) + 2) - 1;
         if base > 62 {
             base = 62;
         }
@@ -97,6 +101,43 @@ impl DhcpV4Client {
                     log::info!("Ignoring invalid DHCP package: {e}");
                 }
             };
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_discovery_max_wait_time_no_panic_on_high_retry_count() {
+        let mut cli = DhcpV4Client::default();
+        for retry_count in [62u32, 1000, u32::MAX] {
+            cli.retry_count = retry_count;
+            let wait_time = cli.discovery_max_wait_time();
+            assert!(
+                (Duration::from_secs(62)..Duration::from_secs(64))
+                    .contains(&wait_time),
+                "retry_count {retry_count}: wait time {wait_time:?} not \
+                 within expected 62-64s range"
+            );
+        }
+    }
+
+    #[test]
+    fn test_discovery_max_wait_time_backoff_sequence() {
+        let mut cli = DhcpV4Client::default();
+        for (retry_count, base) in
+            [(0u32, 3u64), (1, 7), (2, 15), (3, 31), (4, 62), (5, 62)]
+        {
+            cli.retry_count = retry_count;
+            let wait_time = cli.discovery_max_wait_time();
+            assert!(
+                (Duration::from_secs(base)..Duration::from_secs(base + 2))
+                    .contains(&wait_time),
+                "retry_count {retry_count}: wait time {wait_time:?}, expected \
+                 base {base}s plus 0-2s jitter"
+            );
         }
     }
 }
