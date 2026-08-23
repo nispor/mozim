@@ -114,8 +114,11 @@ impl DhcpV6Message {
             options: DhcpV6Options::new(),
         };
         ret.xid.copy_from_slice(&xid.to_be_bytes()[1..]);
+        // RFC 8415 21.7: elapsed-time counts hundredths of a second
+        // and values above 0xffff must be capped, not truncated.
         ret.options.insert(DhcpV6Option::ElapsedTime(
-            trans_begin_time.elapsed().as_millis() as u16 / 10,
+            u16::try_from(trans_begin_time.elapsed().as_millis() / 10)
+                .unwrap_or(u16::MAX),
         ));
         ret.options.insert(DhcpV6Option::ClientId(duid.clone()));
         ret
@@ -200,5 +203,50 @@ impl DhcpV6Message {
         buf.write_bytes(&self.xid);
         self.options.emit(&mut buf);
         buf.data
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::time::Duration;
+
+    use super::*;
+    use crate::{DhcpV6DuidLinkLayerAddr, DhcpV6OptionCode};
+
+    fn test_duid() -> DhcpV6Duid {
+        DhcpV6Duid::LinkLayerAddress(DhcpV6DuidLinkLayerAddr::new(
+            1,
+            &[0x00, 0x23, 0x45, 0x67, 0x89, 0x1a],
+        ))
+    }
+
+    #[test]
+    fn test_elapsed_time_no_wrap_after_65s() {
+        let begin = Instant::now() - Duration::from_secs(70);
+        let msg = DhcpV6Message::new(
+            DhcpV6MessageType::Solicit,
+            1,
+            &test_duid(),
+            &begin,
+        );
+        assert_eq!(
+            msg.options.get_first(DhcpV6OptionCode::ElapsedTime),
+            Some(&DhcpV6Option::ElapsedTime(7000))
+        );
+    }
+
+    #[test]
+    fn test_elapsed_time_capped_at_u16_max() {
+        let begin = Instant::now() - Duration::from_secs(700);
+        let msg = DhcpV6Message::new(
+            DhcpV6MessageType::Solicit,
+            1,
+            &test_duid(),
+            &begin,
+        );
+        assert_eq!(
+            msg.options.get_first(DhcpV6OptionCode::ElapsedTime),
+            Some(&DhcpV6Option::ElapsedTime(u16::MAX))
+        );
     }
 }
