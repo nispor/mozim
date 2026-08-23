@@ -13,7 +13,8 @@ pub struct DhcpV4Config {
     /// Interface index to run DHCP against.
     pub iface_index: u32,
     /// MAC address of interface or proxy.
-    pub(crate) src_mac: [u8; ETH_ALEN],
+    /// None means not set yet, need to resolve through netlink.
+    pub(crate) src_mac: Option<[u8; ETH_ALEN]>,
     pub(crate) client_id: Vec<u8>,
     pub(crate) host_name: String,
     /// Whether acting as DHCP proxy(whether mozim should listen on DHCP reply
@@ -31,7 +32,7 @@ impl Default for DhcpV4Config {
         Self {
             iface_name: String::new(),
             iface_index: 0,
-            src_mac: [0u8; ETH_ALEN],
+            src_mac: None,
             client_id: Vec::new(),
             host_name: String::new(),
             is_proxy: false,
@@ -79,12 +80,14 @@ impl DhcpV4Config {
                 format!("Only support ethernet MAC address({ETH_ALEN} bytes)",),
             ));
         }
-        self.src_mac.copy_from_slice(&mac[..ETH_ALEN]);
+        let mut src_mac = [0u8; ETH_ALEN];
+        src_mac.copy_from_slice(&mac[..ETH_ALEN]);
+        self.src_mac = Some(src_mac);
         Ok(self)
     }
 
     pub(crate) fn need_resolve(&self) -> bool {
-        self.iface_index == 0 || self.src_mac.is_empty()
+        self.iface_index == 0 || self.src_mac.is_none()
     }
 
     #[cfg(feature = "netlink")]
@@ -107,7 +110,9 @@ impl DhcpV4Config {
                 ));
             } else {
                 self.iface_index = iface_index;
-                self.src_mac.copy_from_slice(&src_mac[..ETH_ALEN]);
+                let mut tmp_src_mac = [0u8; ETH_ALEN];
+                tmp_src_mac.copy_from_slice(&src_mac[..ETH_ALEN]);
+                self.src_mac = Some(tmp_src_mac);
             }
         }
         Ok(())
@@ -143,7 +148,7 @@ impl DhcpV4Config {
             src_mac.copy_from_slice(&mac[..ETH_ALEN]);
             Ok(Self {
                 iface_name: out_iface_name.to_string(),
-                src_mac,
+                src_mac: Some(src_mac),
                 is_proxy: true,
                 ..Default::default()
             })
@@ -157,7 +162,9 @@ impl DhcpV4Config {
 
     pub fn use_mac_as_client_id(&mut self) -> &mut Self {
         self.client_id = vec![ARP_HW_TYPE_ETHERNET];
-        self.client_id.extend_from_slice(&self.src_mac);
+        if let Some(src_mac) = self.src_mac.as_ref() {
+            self.client_id.extend_from_slice(src_mac);
+        }
         self
     }
 
@@ -220,5 +227,44 @@ impl DhcpV4Config {
         self.request_opts.sort_unstable();
         self.request_opts.dedup();
         self
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    const TEST_MAC: [u8; ETH_ALEN] = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
+
+    #[test]
+    fn test_need_resolve_default() {
+        let config = DhcpV4Config::new("eth1");
+        assert!(config.need_resolve());
+        assert_eq!(config.src_mac, None);
+    }
+
+    #[test]
+    fn test_need_resolve_with_iface_index_only() {
+        let mut config = DhcpV4Config::new("eth1");
+        config.set_iface_index(2);
+        // Without a MAC address, the client would run with an all-zero
+        // chaddr, so resolving is still required.
+        assert!(config.need_resolve());
+    }
+
+    #[test]
+    fn test_need_resolve_with_mac_only() {
+        let mut config = DhcpV4Config::new("eth1");
+        config.set_iface_mac_raw(&TEST_MAC).unwrap();
+        assert!(config.need_resolve());
+        assert_eq!(config.src_mac, Some(TEST_MAC));
+    }
+
+    #[test]
+    fn test_need_resolve_with_index_and_mac() {
+        let mut config = DhcpV4Config::new("eth1");
+        config.set_iface_index(2);
+        config.set_iface_mac_raw(&TEST_MAC).unwrap();
+        assert!(!config.need_resolve());
     }
 }
