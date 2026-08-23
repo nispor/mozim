@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use std::net::Ipv4Addr;
+
+use tokio::time::{timeout, Duration};
+
 use super::env::{
     init_log, set_client_ip, with_dhcp_env, with_udhcpd_env, FOO1_HOSTNAME,
     FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID, TEST_CLS_DST, TEST_CLS_DST_LEN,
@@ -8,8 +12,6 @@ use super::env::{
 use crate::{
     DhcpV4ClasslessRoute, DhcpV4Client, DhcpV4Config, DhcpV4Lease, DhcpV4State,
 };
-use std::net::Ipv4Addr;
-use tokio::time::{timeout, Duration};
 
 const FOO2_HOSTNAME: &str = "foo2";
 
@@ -90,8 +92,9 @@ fn test_dhcpv4_unicast_renew_uses_srv_id() {
             let state = cli.run().await.unwrap();
             assert_eq!(state, DhcpV4State::Renewing);
 
-            // Observe outcome, timeout is fine, but we should never get so Rebinding
-            // (rebinding happens when renew fails, rebinding will use broadcast again like
+            // Observe outcome, timeout is fine, but we should never get so
+            // Rebinding (rebinding happens when renew fails,
+            // rebinding will use broadcast again like
             // the first discovery)
             let _ = timeout(Duration::from_secs(4), async {
                 loop {
@@ -100,7 +103,10 @@ fn test_dhcpv4_unicast_renew_uses_srv_id() {
                     match state {
                         // Rebinding would happen on T2 = 85% lease time
                         DhcpV4State::Rebinding => {
-                            panic!("entered Rebinding state – Renew via srv_id failed");
+                            panic!(
+                                "entered Rebinding state – Renew via srv_id \
+                                 failed"
+                            );
                         }
                         DhcpV4State::Renewing => {
                             // still fine, keep polling

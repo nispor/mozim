@@ -389,9 +389,22 @@ impl DhcpV4Message {
         config: &DhcpV4Config,
         lease: &DhcpV4Lease,
     ) -> Self {
-        let mut ret = Self::new_request(xid, config, lease);
+        // RFC 2131 4.4.1: DHCPRELEASE carries the released address in
+        // ciaddr (servers like dnsmasq/udhcpd look up the lease by
+        // ciaddr), plus server identifier and client identifier.
+        // Do not reuse new_request(): its `RequestedIpAddress` option
+        // makes dnsmasq zero ciaddr and drop the release silently.
+        let mut ret = Self::new(xid, config);
+        ret.ciaddr = lease.yiaddr;
         ret.options
             .insert(DhcpV4Option::MessageType(DhcpV4MessageType::Release));
+        if lease.srv_id != Ipv4Addr::UNSPECIFIED {
+            ret.options
+                .insert(DhcpV4Option::ServerIdentifier(lease.srv_id));
+        } else {
+            ret.options
+                .insert(DhcpV4Option::ServerIdentifier(lease.siaddr));
+        }
         ret
     }
 
@@ -458,4 +471,52 @@ fn gen_eth_packet(
     })?;
 
     Ok(packet)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_release_msg() {
+        let mut config = DhcpV4Config::new("eth1");
+        config
+            .set_iface_mac_raw(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01])
+            .unwrap()
+            .use_mac_as_client_id();
+        let mut opts = DhcpV4Options::new();
+        opts.insert(DhcpV4Option::IpAddressLeaseTime(100));
+        opts.insert(DhcpV4Option::ServerIdentifier(Ipv4Addr::new(
+            192, 0, 2, 1,
+        )));
+        let lease = DhcpV4Lease::new_from_msg(&DhcpV4Message {
+            yiaddr: Ipv4Addr::new(192, 0, 2, 115),
+            options: opts,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let msg = DhcpV4Message::new_release(0x20260823, &config, &lease);
+
+        // RFC 2131 4.4.1: the released address must be in ciaddr,
+        // otherwise the server cannot find the lease.
+        assert_eq!(msg.ciaddr, lease.yiaddr);
+        assert_eq!(msg.message_type(), Some(DhcpV4MessageType::Release));
+        assert_eq!(
+            msg.options.get(DhcpV4OptionCode::ServerIdentifier),
+            Some(&DhcpV4Option::ServerIdentifier(lease.srv_id))
+        );
+        // dnsmasq zeroes ciaddr when the Requested IP Address option is
+        // present and then silently drops the RELEASE.
+        assert!(msg
+            .options
+            .get(DhcpV4OptionCode::RequestedIpAddress)
+            .is_none());
+        assert_eq!(
+            DhcpV4Message::parse(&msg.to_dhcp_packet().unwrap())
+                .unwrap()
+                .ciaddr,
+            lease.yiaddr
+        );
+    }
 }
