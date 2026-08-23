@@ -8,6 +8,7 @@ use super::{
 };
 use crate::{
     DhcpError, DhcpV4ClasslessRoute, DhcpV4Option, DhcpV4OptionCode, ErrorKind,
+    ETH_ALEN,
 };
 
 #[derive(Debug, PartialEq, Clone)]
@@ -70,6 +71,11 @@ impl DhcpV4Lease {
             dhcp_opts: msg.options.clone(),
             ..Default::default()
         };
+        // Only present when the reply was received through a raw
+        // socket carrying the ethernet header.
+        if msg.srv_mac.len() == ETH_ALEN {
+            ret.srv_mac.copy_from_slice(&msg.srv_mac[..ETH_ALEN]);
+        }
         if let Some(DhcpV4Option::IpAddressLeaseTime(v)) =
             msg.options.get(DhcpV4OptionCode::IpAddressLeaseTime)
         {
@@ -310,5 +316,61 @@ mod test {
         };
         let lease = DhcpV4Lease::new_from_msg(&msg).unwrap();
         assert_eq!(lease.classless_routes, None);
+    }
+
+    #[test]
+    fn test_lease_srv_mac_from_msg() {
+        let mut opts = DhcpV4Options::new();
+        opts.insert(DhcpV4Option::IpAddressLeaseTime(100));
+        let msg = DhcpV4Message {
+            yiaddr: Ipv4Addr::new(192, 0, 2, 115),
+            srv_mac: vec![0x52, 0x54, 0x00, 0x12, 0x34, 0x56],
+            options: opts,
+            ..Default::default()
+        };
+        let lease = DhcpV4Lease::new_from_msg(&msg).unwrap();
+        assert_eq!(lease.srv_mac, [0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+    }
+
+    #[test]
+    fn test_lease_srv_mac_kept_broadcast_without_eth_info() {
+        let mut opts = DhcpV4Options::new();
+        opts.insert(DhcpV4Option::IpAddressLeaseTime(100));
+        let msg = DhcpV4Message {
+            options: opts,
+            ..Default::default()
+        };
+        let lease = DhcpV4Lease::new_from_msg(&msg).unwrap();
+        assert_eq!(lease.srv_mac, [u8::MAX; ETH_ALEN]);
+    }
+
+    #[test]
+    fn test_lease_srv_mac_from_eth_packet() {
+        let srv_mac = [0x52u8, 0x54, 0x00, 0x12, 0x34, 0x56];
+        let mut opts = DhcpV4Options::new();
+        opts.insert(DhcpV4Option::IpAddressLeaseTime(100));
+        let dhcp_msg = DhcpV4Message {
+            yiaddr: Ipv4Addr::new(192, 0, 2, 115),
+            options: opts,
+            ..Default::default()
+        };
+        let payload = dhcp_msg.to_dhcp_packet().unwrap();
+        let builder = etherparse::PacketBuilder::ethernet2(
+            srv_mac,
+            [0x00, 0x23, 0x45, 0x67, 0x89, 0x1a],
+        )
+        .ipv4([192, 0, 2, 1], [192, 0, 2, 115], 128)
+        .udp(
+            crate::dhcpv4::socket::SERVER_PORT,
+            crate::dhcpv4::socket::CLIENT_PORT,
+        );
+        let mut frame = Vec::with_capacity(builder.size(payload.len()));
+        builder.write(&mut frame, &payload).unwrap();
+
+        let lease = DhcpV4Message::parse_eth_packet(&frame)
+            .unwrap()
+            .lease()
+            .unwrap();
+        assert_eq!(lease.srv_mac, srv_mac);
     }
 }
