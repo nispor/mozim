@@ -321,7 +321,9 @@ impl DhcpV4Message {
             xid,
             ..Default::default()
         };
-        ret.chaddr[..config.src_mac.len()].copy_from_slice(&config.src_mac);
+        if let Some(src_mac) = config.src_mac.as_ref() {
+            ret.chaddr[..src_mac.len()].copy_from_slice(src_mac);
+        }
         if !config.host_name.is_empty() {
             ret.options
                 .insert(DhcpV4Option::HostName(config.host_name.clone()));

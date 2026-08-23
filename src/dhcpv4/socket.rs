@@ -101,11 +101,12 @@ impl DhcpRawSocket {
 
         apply_dhcp_bpf(fd.as_raw_fd())?;
 
+        let src_mac = config.src_mac.unwrap_or_default();
         bind_raw_socket(
             fd.as_raw_fd(),
             libc::ETH_P_ALL,
             iface_index,
-            &config.src_mac,
+            &src_mac,
         )?;
 
         if config.is_proxy {
