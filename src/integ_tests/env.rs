@@ -232,6 +232,10 @@ pub(crate) fn set_client_ip(address: Ipv4Addr) {
     run_cmd(&format!("ip addr add {address}/24 dev {TEST_NIC_CLI}",));
 }
 
+pub(crate) fn set_client_nic_down() {
+    run_cmd(&format!("ip link set {TEST_NIC_CLI} down"));
+}
+
 pub(crate) fn with_dhcp_env<T>(test: T)
 where
     T: FnOnce() + std::panic::UnwindSafe,

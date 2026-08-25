@@ -131,21 +131,34 @@ impl DhcpV4Socket for DhcpRawSocket {
         while sent < eth_packet.len() {
             let mut guard = self.fd.writable().await?;
 
-            let _ = guard
-                .try_io(|inner| {
-                    sent += nix::sys::socket::send(
-                        inner.get_ref().as_raw_fd(),
-                        &eth_packet[sent..],
-                        MsgFlags::empty(),
-                    )?;
-                    Ok(())
-                })
-                .map_err(|e| {
-                    DhcpError::new(
+            // `try_io()` returns `Ok(Err(_))` for every error except
+            // `WouldBlock`; discarding it would hide persistent send
+            // failures and spin the loop.
+            match guard.try_io(|inner| {
+                let n = nix::sys::socket::send(
+                    inner.get_ref().as_raw_fd(),
+                    &eth_packet[sent..],
+                    MsgFlags::empty(),
+                )?;
+                Ok(n)
+            }) {
+                Ok(Ok(0)) => {
+                    return Err(DhcpError::new(
                         ErrorKind::IoError,
-                        format!("Failed to send packet to raw socket: {e:?}"),
-                    )
-                })?;
+                        "Raw socket send made no progress".to_string(),
+                    ));
+                }
+                Ok(Ok(n)) => sent += n,
+                Ok(Err(e)) => {
+                    return Err(DhcpError::new(
+                        ErrorKind::IoError,
+                        format!("Failed to send packet to raw socket: {e}"),
+                    ));
+                }
+                // WouldBlock: `try_io()` already cleared the readiness,
+                // wait for the next writable event.
+                Err(_) => continue,
+            }
         }
 
         Ok(())
