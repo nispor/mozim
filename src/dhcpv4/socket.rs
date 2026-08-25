@@ -297,7 +297,7 @@ fn bind_socket_to_iface(fd: RawFd, iface_name: &str) -> Result<(), DhcpError> {
             libc::SOL_SOCKET,
             libc::SO_BINDTODEVICE,
             iface_name_cstr.as_ptr() as *const libc::c_void,
-            std::mem::size_of::<CString>() as libc::socklen_t,
+            bind_socket_to_iface_optlen(&iface_name_cstr),
         );
         if rc != 0 {
             return Err(DhcpError::new(
@@ -311,4 +311,25 @@ fn bind_socket_to_iface(fd: RawFd, iface_name: &str) -> Result<(), DhcpError> {
         }
     }
     Ok(())
+}
+
+fn bind_socket_to_iface_optlen(iface_name_cstr: &CString) -> libc::socklen_t {
+    // SO_BINDTODEVICE takes a null-terminated interface name, so the option
+    // length must cover the name plus its terminating NUL.
+    iface_name_cstr.as_bytes_with_nul().len() as libc::socklen_t
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_bind_socket_to_iface_optlen_is_interface_name_length() {
+        for (iface_name, expected) in
+            [("", 1), ("lo", 3), ("eth0", 5), ("wlan0", 6)]
+        {
+            let iface_name_cstr = CString::new(iface_name).unwrap();
+            assert_eq!(bind_socket_to_iface_optlen(&iface_name_cstr), expected);
+        }
+    }
 }
