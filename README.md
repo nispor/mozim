@@ -39,3 +39,10 @@ sudo ./utils/test_env_mozim &
 cargo run --example mozim_dhcpv4
 cargo run --example mozim_dhcpv6
 ```
+
+## Known issues
+
+* Mozim does not support VLAN interfaces created with `reorder_hdr off`.
+  DHCP over VLAN is only supported with the default `reorder_hdr on`,
+  where the kernel strips the VLAN tag before delivering frames to the
+  raw socket.
