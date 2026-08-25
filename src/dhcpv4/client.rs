@@ -88,11 +88,7 @@ impl DhcpV4Client {
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             Err(e.clone())
         } else if !self.state.is_done() && self.config.timeout_sec != 0 {
-            let remains = if let Some(t) = self.timeout_timer.as_ref() {
-                t.remains()?
-            } else {
-                std::time::Duration::from_secs(self.config.timeout_sec.into())
-            };
+            let remains = self.get_timeout_remains()?;
             tokio::select! {
                 _ = tokio::time::sleep(remains) => {
                     let e = DhcpError::new(
@@ -112,6 +108,17 @@ impl DhcpV4Client {
         } else {
             self.run_without_timeout().await
         }
+    }
+
+    fn get_timeout_remains(
+        &mut self,
+    ) -> Result<std::time::Duration, DhcpError> {
+        if self.timeout_timer.is_none() {
+            self.timeout_timer = Some(DhcpTimer::new(
+                std::time::Duration::from_secs(self.config.timeout_sec.into()),
+            )?);
+        }
+        self.timeout_timer.as_ref().unwrap().remains()
     }
 
     async fn run_without_timeout(&mut self) -> Result<DhcpV4State, DhcpError> {
@@ -173,6 +180,7 @@ impl DhcpV4Client {
         self.t1_timer = None;
         self.t2_timer = None;
         self.lease_timer = None;
+        self.timeout_timer = None;
         self.error = None;
     }
 
@@ -233,5 +241,44 @@ impl DhcpV4Client {
             self.state = DhcpV4State::InitReboot;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn test_timeout_timer_spans_run_calls() {
+        let mut config = DhcpV4Config::new("eth1");
+        config.set_timeout_sec(1);
+        let mut cli = DhcpV4Client {
+            config,
+            ..Default::default()
+        };
+        let first = cli.get_timeout_remains().unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        let second = cli.get_timeout_remains().unwrap();
+        assert!(
+            second < first,
+            "timeout should decrease across run() calls: {first:?} -> \
+             {second:?}"
+        );
+    }
+
+    #[test]
+    fn test_clean_up_resets_timeout_timer() {
+        let mut config = DhcpV4Config::new("eth1");
+        config.set_timeout_sec(1);
+        let mut cli = DhcpV4Client {
+            config,
+            ..Default::default()
+        };
+        cli.get_timeout_remains().unwrap();
+        assert!(cli.timeout_timer.is_some());
+        cli.clean_up();
+        assert!(cli.timeout_timer.is_none());
     }
 }
