@@ -582,14 +582,38 @@ impl DhcpV6OptionNtpServer {
             .context("Invalid OPTION_NTP_SERVER suboption-len")?;
         Ok(match subopt_type {
             NTP_SUBOPTION_SRV_ADDR => {
-                Self::ServerAddr(buf.get_ipv6().context(
+                let raw = buf.get_bytes(subopt_len.into()).context(
                     "Invalid OPTION_NTP_SERVER NTP_SUBOPTION_SRV_ADDR",
-                )?)
+                )?;
+                if raw.len() != 16 {
+                    return Err(DhcpError::new(
+                        ErrorKind::InvalidDhcpMessage,
+                        format!(
+                            "Invalid NTP SRV_ADDR subopt_len {}, expected 16",
+                            subopt_len
+                        ),
+                    ));
+                }
+                let mut octets = [0u8; 16];
+                octets.copy_from_slice(raw);
+                Self::ServerAddr(Ipv6Addr::from(octets))
             }
             NTP_SUBOPTION_MC_ADDR => {
-                Self::MulticastAddr(buf.get_ipv6().context(
+                let raw = buf.get_bytes(subopt_len.into()).context(
                     "Invalid OPTION_NTP_SERVER NTP_SUBOPTION_MC_ADDR",
-                )?)
+                )?;
+                if raw.len() != 16 {
+                    return Err(DhcpError::new(
+                        ErrorKind::InvalidDhcpMessage,
+                        format!(
+                            "Invalid NTP MC_ADDR subopt_len {}, expected 16",
+                            subopt_len
+                        ),
+                    ));
+                }
+                let mut octets = [0u8; 16];
+                octets.copy_from_slice(raw);
+                Self::MulticastAddr(Ipv6Addr::from(octets))
             }
             NTP_SUBOPTION_SRV_FQDN => Self::ServerFqdn({
                 let mut lables = Vec::new();
@@ -713,6 +737,62 @@ mod test {
         assert_eq!(
             opts.get_first(DhcpV6OptionCode::ElapsedTime),
             Some(&DhcpV6Option::ElapsedTime(100))
+        );
+    }
+
+    // Issue 14: SRV_ADDR/MC_ADDR must honour subopt_len, not read a
+    // hardcoded 16 bytes. A subopt_len that is not 16 must be rejected
+    // by DhcpV6OptionNtpServer::parse (the outer DhcpV6Options::parse
+    // swallows subopt errors silently, so test at the subopt level).
+    #[test]
+    fn ntp_srv_addr_malformed_subopt_len_rejects() {
+        // subopt_type=1 (SRV_ADDR), subopt_len=8 (wrong, must be 16),
+        // followed by 8 bytes of data.
+        let raw: Vec<u8> = vec![
+            0x00, 0x01, // subopt_type = SRV_ADDR (1)
+            0x00, 0x08, // subopt_len = 8  (invalid — must be 16)
+            0x20, 0x01, 0x0D, 0xB8, // 8 bytes
+            0x00, 0x01,
+        ];
+        let mut buf = Buffer::new(&raw);
+        assert!(
+            DhcpV6OptionNtpServer::parse(&mut buf).is_err(),
+            "expected Err for NTP SRV_ADDR subopt_len=8"
+        );
+    }
+
+    #[test]
+    fn ntp_mc_addr_malformed_subopt_len_rejects() {
+        // subopt_type=2 (MC_ADDR), subopt_len=10 (wrong, must be 16)
+        let raw: Vec<u8> = vec![
+            0x00, 0x02, // subopt_type = MC_ADDR (2)
+            0x00, 0x0A, // subopt_len = 10 (invalid)
+            0xFF, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 10 bytes
+            0x00, 0x01,
+        ];
+        let mut buf = Buffer::new(&raw);
+        assert!(
+            DhcpV6OptionNtpServer::parse(&mut buf).is_err(),
+            "expected Err for NTP MC_ADDR subopt_len=10"
+        );
+    }
+
+    #[test]
+    fn ntp_srv_addr_valid_parses() {
+        // subopt_type=1, subopt_len=16, value=2001:db8::1
+        let raw: Vec<u8> = vec![
+            0x00, 0x01, // SRV_ADDR
+            0x00, 0x10, // subopt_len = 16
+            0x20, 0x01, 0x0D, 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x01,
+        ];
+        let mut buf = Buffer::new(&raw);
+        let srv = DhcpV6OptionNtpServer::parse(&mut buf).expect("valid srv");
+        assert_eq!(
+            srv,
+            DhcpV6OptionNtpServer::ServerAddr(Ipv6Addr::new(
+                0x2001, 0x0DB8, 0, 0, 0, 0, 0, 1
+            ))
         );
     }
 }
