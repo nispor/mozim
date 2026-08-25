@@ -134,25 +134,13 @@ impl DhcpV4Config {
         out_iface_name: &str,
         proxy_mac: &str,
     ) -> Result<Self, DhcpError> {
-        let mac = parse_mac(proxy_mac)?;
-        if mac.len() != ETH_ALEN {
-            Err(DhcpError::new(
-                ErrorKind::NotSupported,
-                format!(
-                    "Supported MAC address {proxy_mac}, expecting format \
-                     01:02:2a:2c:f7:04"
-                ),
-            ))
-        } else {
-            let mut src_mac = [0; ETH_ALEN];
-            src_mac.copy_from_slice(&mac[..ETH_ALEN]);
-            Ok(Self {
-                iface_name: out_iface_name.to_string(),
-                src_mac: Some(src_mac),
-                is_proxy: true,
-                ..Default::default()
-            })
-        }
+        let src_mac = parse_mac(proxy_mac)?;
+        Ok(Self {
+            iface_name: out_iface_name.to_string(),
+            src_mac: Some(src_mac),
+            is_proxy: true,
+            ..Default::default()
+        })
     }
 
     pub fn set_host_name(&mut self, host_name: &str) -> &mut Self {
@@ -266,5 +254,25 @@ mod test {
         config.set_iface_index(2);
         config.set_iface_mac_raw(&TEST_MAC).unwrap();
         assert!(!config.need_resolve());
+    }
+
+    #[test]
+    fn test_set_iface_mac() {
+        let mut config = DhcpV4Config::new("eth1");
+        config.set_iface_mac("01:02:2a:2c:f7:04").unwrap();
+        assert_eq!(config.src_mac, Some([0x01, 0x02, 0x2a, 0x2c, 0xf7, 0x04]));
+        let mut config = DhcpV4Config::new("eth1");
+        assert!(config.set_iface_mac("01:02:2a:2c:f7").is_err());
+        assert!(config.set_iface_mac("01:02:2a:2c:f7:04:05").is_err());
+    }
+
+    #[test]
+    fn test_new_proxy_mac() {
+        let config =
+            DhcpV4Config::new_proxy("eth1", "01:02:2a:2c:f7:04").unwrap();
+        assert!(config.is_proxy);
+        assert_eq!(config.src_mac, Some([0x01, 0x02, 0x2a, 0x2c, 0xf7, 0x04]));
+        assert!(DhcpV4Config::new_proxy("eth1", "01:02:2a:2c:f7").is_err());
+        assert!(DhcpV4Config::new_proxy("eth1", "0g:02:2a:2c:f7:04").is_err());
     }
 }
