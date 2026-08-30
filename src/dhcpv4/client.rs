@@ -185,6 +185,7 @@ impl DhcpV4Client {
     }
 
     pub fn done(&mut self, lease: DhcpV4Lease) -> Result<(), DhcpError> {
+        lease.validate()?;
         self.set_lease_timer(&lease)?;
         self.timeout_timer = None;
         self.raw_socket = None;
@@ -280,5 +281,82 @@ mod test {
         assert!(cli.timeout_timer.is_some());
         cli.clean_up();
         assert!(cli.timeout_timer.is_none());
+    }
+
+    #[test]
+    fn test_done_rejects_zero_t1() {
+        let mut lease = DhcpV4Lease::default();
+        lease.t2_sec = 60;
+        lease.lease_time_sec = 100;
+        let mut cli = DhcpV4Client::default();
+        let err = cli.done(lease).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidDhcpMessage);
+        assert!(
+            err.msg().contains("T1"),
+            "unexpected error message: {}",
+            err.msg()
+        );
+    }
+
+    #[test]
+    fn test_done_rejects_zero_t2() {
+        let mut lease = DhcpV4Lease::default();
+        lease.t1_sec = 30;
+        lease.lease_time_sec = 100;
+        let mut cli = DhcpV4Client::default();
+        let err = cli.done(lease).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidDhcpMessage);
+        assert!(
+            err.msg().contains("T2"),
+            "unexpected error message: {}",
+            err.msg()
+        );
+    }
+
+    #[test]
+    fn test_done_rejects_t1_not_earlier_than_t2() {
+        let mut lease = DhcpV4Lease::default();
+        lease.t1_sec = 60;
+        lease.t2_sec = 60;
+        lease.lease_time_sec = 100;
+        let mut cli = DhcpV4Client::default();
+        let err = cli.done(lease).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidDhcpMessage);
+        assert!(
+            err.msg().contains("T1"),
+            "unexpected error message: {}",
+            err.msg()
+        );
+    }
+
+    #[test]
+    fn test_done_rejects_t2_not_earlier_than_lease_time() {
+        let mut lease = DhcpV4Lease::default();
+        lease.t1_sec = 30;
+        lease.t2_sec = 100;
+        lease.lease_time_sec = 100;
+        let mut cli = DhcpV4Client::default();
+        let err = cli.done(lease).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidDhcpMessage);
+        assert!(
+            err.msg().contains("T2"),
+            "unexpected error message: {}",
+            err.msg()
+        );
+    }
+
+    #[test]
+    fn test_done_accepts_valid_manual_lease() {
+        let mut lease = DhcpV4Lease::default();
+        lease.t1_sec = 30;
+        lease.t2_sec = 60;
+        lease.lease_time_sec = 100;
+        let mut cli = DhcpV4Client::default();
+        cli.done(lease).unwrap();
+        assert!(cli.t1_timer.is_some());
+        assert!(cli.t2_timer.is_some());
+        assert!(cli.lease_timer.is_some());
+        assert!(cli.lease.is_some());
+        assert!(matches!(cli.state, DhcpV4State::Done(_)));
     }
 }

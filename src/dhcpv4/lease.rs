@@ -188,7 +188,7 @@ impl DhcpV4Lease {
         Ok(ret)
     }
 
-    fn validate(&self) -> Result<(), DhcpError> {
+    pub(crate) fn validate(&self) -> Result<(), DhcpError> {
         // RFC 2131 4.4.5: T1 MUST be earlier than T2, which, in turn,
         // MUST be earlier than the time at which the lease expires.
         if self.t1_sec == 0 {

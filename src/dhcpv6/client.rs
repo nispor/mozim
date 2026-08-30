@@ -209,6 +209,8 @@ impl DhcpV6Client {
     }
 
     pub fn done(&mut self, lease: DhcpV6Lease) -> Result<(), DhcpError> {
+        let mut lease = lease;
+        lease.sanitize_lease()?;
         self.set_lease_timer(&lease)?;
         self.reset_retransmit_counters();
         self.timeout_timer = None;
@@ -274,6 +276,14 @@ mod test {
         DhcpV6Client::init(config, None).await.unwrap()
     }
 
+    fn manual_lease() -> DhcpV6Lease {
+        let mut lease = DhcpV6Lease::default();
+        lease.address = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1);
+        lease.preferred_time_sec = 120;
+        lease.valid_time_sec = 240;
+        lease
+    }
+
     #[tokio::test]
     async fn test_timeout_timer_spans_run_calls() {
         let mut cli = test_client().await;
@@ -294,5 +304,53 @@ mod test {
         assert!(cli.timeout_timer.is_some());
         cli.clean_up();
         assert!(cli.timeout_timer.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_done_defaults_zero_t1_t2() {
+        let mut cli = test_client().await;
+        cli.done(manual_lease()).unwrap();
+        let lease = cli.lease.as_ref().unwrap();
+        assert_eq!(lease.t1_sec, 60);
+        assert_eq!(lease.t2_sec, 90);
+        assert!(cli.t1_timer.is_some());
+        assert!(cli.t2_timer.is_some());
+        assert!(cli.valid_timer.is_some());
+        assert!(matches!(cli.state, DhcpV6State::Done(_)));
+    }
+
+    #[tokio::test]
+    async fn test_done_rejects_invalid_manual_lease() {
+        let mut lease = manual_lease();
+        lease.t1_sec = 200;
+        lease.t2_sec = 100;
+        let mut cli = test_client().await;
+        let err = cli.done(lease).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidDhcpMessage);
+        assert!(
+            err.msg().contains("T1"),
+            "unexpected error message: {}",
+            err.msg()
+        );
+        assert!(cli.t1_timer.is_none());
+        assert!(cli.t2_timer.is_none());
+        assert!(cli.valid_timer.is_none());
+        assert_eq!(cli.state, DhcpV6State::Solicit);
+    }
+
+    #[tokio::test]
+    async fn test_done_rejects_zero_timers_without_preferred_lifetime() {
+        let mut lease = manual_lease();
+        lease.preferred_time_sec = 0;
+        let mut cli = test_client().await;
+        let err = cli.done(lease).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidDhcpMessage);
+        assert!(
+            err.msg().contains("T1"),
+            "unexpected error message: {}",
+            err.msg()
+        );
+        assert!(cli.t1_timer.is_none());
+        assert!(cli.t2_timer.is_none());
     }
 }
