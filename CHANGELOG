@@ -1,4 +1,32 @@
 # Changelog
+## [0.3.3] - 2026-08-30
+### Breaking changes
+ - N/A
+
+### New features
+ - dhcpv6: accept compressed RFC 1035 domain names. (5d2e2bb)
+ - dhcpv6: support search domain and NTP servers in lease. (2136ce3)
+
+### Bug fixes
+ - dhcpv4: remove dead `ServerIdentifier` insert in `new_request()`. (fff79e7)
+ - dhcpv4/dhcpv6: validate manual leases before installing timers. (0b3bd91)
+ - dhcpv4: fix zero T1/T2 causing immediate renew loop. (ecc7682)
+ - dhcpv4: fix add_jitter() jitter range. (4944579)
+ - dhcpv6: Fix NTP ServerAddr/MulticastAddr parse ignoring subopt_len. (1b6f0c1)
+ - dhcpv4: Fix BPF fragment check and document VLAN limitation. (13e648c)
+ - dhcpv4: Fix parse_mac() accepting wrong MAC length. (6594add)
+ - dhcpv4: Fix `bind_socket_to_iface()` optlen. (dad1bda)
+ - dhcpv4/dhcpv6: Fix `timeout_timer` never initialized. (eaadec7)
+ - dhcpv4: Fix hang when release lease on down interface. (d31247c)
+ - dhcpv4: Fix DHCPRELEASE sent to broadcast MAC instead of server MAC. (1d329c5)
+ - dhcpv4: Fix need_resolve() ignoring unset MAC address. (c0dd120)
+ - dhcpv6: Fix ElapsedTime option wrapping after 65.5 seconds. (8c5b2fb)
+ - dhcpv4: Fix DHCPRELEASE being ignored by DHCP servers. (44223c1)
+ - dhcpv4: Fix string options emitting 255-byte fixed payload. (bae06bd)
+ - dhcpv4: Fix MS classless static route (option 249) fallback. (4d208a7)
+ - dhcpv4: Fix panic in discovery_max_wait_time() when retry_count >= 62. (e94e6ea)
+ - dhcpv6: Fix infinite loop when parsing malformed option. (dac99ef)
+
 ## [0.3.2] - 2026-05-08
 ### Breaking changes
  - N/A
