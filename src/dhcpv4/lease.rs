@@ -90,21 +90,36 @@ impl DhcpV4Lease {
         if let Some(DhcpV4Option::RenewalTime(v)) =
             msg.options.get(DhcpV4OptionCode::RenewalTime)
         {
-            ret.t1_sec = *v;
+            // RFC 2131 4.4.5: T1 defaults to 0.5 * lease duration.
+            // Explicit 0 is treated like a missing option: some servers
+            // send it to leave T1 to the client, and honoring it would
+            // make the client renew immediately.
+            ret.t1_sec = if *v == 0 {
+                default_t1_sec(ret.lease_time_sec)
+            } else {
+                *v
+            };
         } else {
             // RFC 2131 says we should pick 0.5 of the lease time if no t1
             // option given.
-            ret.t1_sec = add_jitter(ret.lease_time_sec / 2);
+            ret.t1_sec = default_t1_sec(ret.lease_time_sec);
         }
 
         if let Some(DhcpV4Option::RebindingTime(v)) =
             msg.options.get(DhcpV4OptionCode::RebindingTime)
         {
-            ret.t2_sec = *v;
+            // RFC 2131 4.4.5: T2 defaults to 0.875 * lease duration.
+            // Explicit 0 is treated like a missing option for the same
+            // reason as T1 above.
+            ret.t2_sec = if *v == 0 {
+                default_t2_sec(ret.lease_time_sec)
+            } else {
+                *v
+            };
         } else {
             // RFC 2131 says we should pick 0.875 of the lease time if no t1
             // option given.
-            ret.t2_sec = add_jitter((ret.lease_time_sec as f32 * 0.875) as u32);
+            ret.t2_sec = default_t2_sec(ret.lease_time_sec);
         }
 
         if let Some(DhcpV4Option::InterfaceMtu(v)) =
@@ -174,16 +189,31 @@ impl DhcpV4Lease {
     }
 
     fn validate(&self) -> Result<(), DhcpError> {
-        if self.t1_sec > self.t2_sec {
+        // RFC 2131 4.4.5: T1 MUST be earlier than T2, which, in turn,
+        // MUST be earlier than the time at which the lease expires.
+        if self.t1_sec == 0 {
             return Err(DhcpError::new(
                 ErrorKind::InvalidDhcpMessage,
-                "Invalid DHCP lease: T1 is bigger than T2".to_string(),
+                "Invalid DHCP lease: T1 is 0".to_string(),
             ));
         }
-        if self.t2_sec > self.lease_time_sec {
+        if self.t2_sec == 0 {
             return Err(DhcpError::new(
                 ErrorKind::InvalidDhcpMessage,
-                "Invalid DHCP lease: T2 is bigger than lease time".to_string(),
+                "Invalid DHCP lease: T2 is 0".to_string(),
+            ));
+        }
+        if self.t1_sec >= self.t2_sec {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                "Invalid DHCP lease: T1 is not earlier than T2".to_string(),
+            ));
+        }
+        if self.t2_sec >= self.lease_time_sec {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                "Invalid DHCP lease: T2 is not earlier than lease time"
+                    .to_string(),
             ));
         }
         if self.srv_id.is_unspecified() {
@@ -214,6 +244,14 @@ fn add_jitter(val: u32) -> u32 {
         return val;
     }
     val + rand::random_range(0..5) - 2
+}
+
+fn default_t1_sec(lease_time_sec: u32) -> u32 {
+    add_jitter(lease_time_sec / 2)
+}
+
+fn default_t2_sec(lease_time_sec: u32) -> u32 {
+    add_jitter((lease_time_sec as f32 * 0.875) as u32)
 }
 
 #[cfg(test)]
@@ -276,6 +314,105 @@ mod test {
             lease.t2_sec >= 85 && lease.t2_sec <= 89,
             "t2 seconds {} outside of range 85..89",
             lease.t2_sec
+        );
+    }
+
+    #[test]
+    fn test_dhcp_v4_lease_explicit_zero_t1_uses_default() {
+        let mut opts = DhcpV4Options::new();
+        opts.insert(DhcpV4Option::IpAddressLeaseTime(100));
+        opts.insert(DhcpV4Option::RenewalTime(0));
+        opts.insert(DhcpV4Option::RebindingTime(60));
+        let msg = DhcpV4Message {
+            options: opts,
+            ..Default::default()
+        };
+        let lease = DhcpV4Lease::new_from_msg(&msg).unwrap();
+        assert_eq!(lease.t2_sec, 60);
+        assert!(
+            lease.t1_sec >= 48 && lease.t1_sec <= 52,
+            "t1 seconds {} outside of range 48..52",
+            lease.t1_sec
+        );
+    }
+
+    #[test]
+    fn test_dhcp_v4_lease_explicit_zero_t2_uses_default() {
+        let mut opts = DhcpV4Options::new();
+        opts.insert(DhcpV4Option::IpAddressLeaseTime(100));
+        opts.insert(DhcpV4Option::RenewalTime(30));
+        opts.insert(DhcpV4Option::RebindingTime(0));
+        let msg = DhcpV4Message {
+            options: opts,
+            ..Default::default()
+        };
+        let lease = DhcpV4Lease::new_from_msg(&msg).unwrap();
+        assert_eq!(lease.t1_sec, 30);
+        assert!(
+            lease.t2_sec >= 85 && lease.t2_sec <= 89,
+            "t2 seconds {} outside of range 85..89",
+            lease.t2_sec
+        );
+    }
+
+    #[test]
+    fn test_dhcp_v4_lease_explicit_zero_t1_t2_use_defaults() {
+        let mut opts = DhcpV4Options::new();
+        opts.insert(DhcpV4Option::IpAddressLeaseTime(100));
+        opts.insert(DhcpV4Option::RenewalTime(0));
+        opts.insert(DhcpV4Option::RebindingTime(0));
+        let msg = DhcpV4Message {
+            options: opts,
+            ..Default::default()
+        };
+        let lease = DhcpV4Lease::new_from_msg(&msg).unwrap();
+        assert!(
+            lease.t1_sec >= 48 && lease.t1_sec <= 52,
+            "t1 seconds {} outside of range 48..52",
+            lease.t1_sec
+        );
+        assert!(
+            lease.t2_sec >= 85 && lease.t2_sec <= 89,
+            "t2 seconds {} outside of range 85..89",
+            lease.t2_sec
+        );
+    }
+
+    #[test]
+    fn test_dhcp_v4_lease_t1_equals_t2_rejected() {
+        let mut opts = DhcpV4Options::new();
+        opts.insert(DhcpV4Option::IpAddressLeaseTime(100));
+        opts.insert(DhcpV4Option::RenewalTime(50));
+        opts.insert(DhcpV4Option::RebindingTime(50));
+        let msg = DhcpV4Message {
+            options: opts,
+            ..Default::default()
+        };
+        let err = DhcpV4Lease::new_from_msg(&msg).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidDhcpMessage);
+        assert!(
+            err.msg().contains("T1"),
+            "unexpected error message: {}",
+            err.msg()
+        );
+    }
+
+    #[test]
+    fn test_dhcp_v4_lease_t2_equals_lease_time_rejected() {
+        let mut opts = DhcpV4Options::new();
+        opts.insert(DhcpV4Option::IpAddressLeaseTime(100));
+        opts.insert(DhcpV4Option::RenewalTime(50));
+        opts.insert(DhcpV4Option::RebindingTime(100));
+        let msg = DhcpV4Message {
+            options: opts,
+            ..Default::default()
+        };
+        let err = DhcpV4Lease::new_from_msg(&msg).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidDhcpMessage);
+        assert!(
+            err.msg().contains("T2"),
+            "unexpected error message: {}",
+            err.msg()
         );
     }
 

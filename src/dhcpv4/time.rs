@@ -7,7 +7,6 @@ use crate::{DhcpError, DhcpTimer, DhcpV4Client, DhcpV4Lease};
 pub(crate) const MIN_REBIND_RENEW_WAIT_TIME: Duration = Duration::from_secs(60);
 
 impl DhcpV4Client {
-    // TODO(Gris Ge): validate T1 T2 and lease according to RFC 2131 mandates.
     pub(crate) fn set_lease_timer(
         &mut self,
         lease: &DhcpV4Lease,
