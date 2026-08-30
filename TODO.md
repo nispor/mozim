@@ -1,5 +1,8 @@
-- Explicit T1/T2 option values of 0 pass `validate()` and
-  produce an immediate-renew loop; only ordering is checked.
+- `DhcpV4Client::done()` does not validate manually constructed
+  leases: `set_lease_timer()` (`src/dhcpv4/time.rs`) creates
+  zero-duration timers when T1/T2 are 0, reproducing the
+  immediate-renew loop for leases not parsed via
+  `DhcpV4Lease::new_from_msg()`.
 - `new_request()` (`src/dhcpv4/msg.rs`) inserts
   `ServerIdentifier` twice: first unconditionally, then again in
   the `srv_id != UNSPECIFIED` branch. Harmless on the wire
