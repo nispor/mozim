@@ -112,6 +112,13 @@ const OPTION_DOMAIN_LIST: u16 = 24;
 const OPTION_IA_PD: u16 = 25;
 const OPTION_IAPREFIX: u16 = 26;
 const OPTION_NTP_SERVER: u16 = 56;
+const DNS_LABEL_MAX_LEN: usize = 63;
+const DNS_NAME_MAX_LEN: usize = 255;
+// A 255-octet name with 1-octet labels can contain at most 127
+// labels, so 128 is the maximum possible loop count.
+const DNS_MAX_LABELS: usize = 128;
+// RFC 1035: the high two bits of a label length must be zero.
+const DNS_LABEL_LENGTH_MASK: u8 = 0xC0;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, Default)]
 #[non_exhaustive]
@@ -420,16 +427,10 @@ impl DhcpV6Option {
                 let mut tmp_opt_buf = Buffer::new(raw);
                 let mut domains = Vec::new();
                 while !tmp_opt_buf.is_empty() {
-                    let str_len = tmp_opt_buf.get_u8().context(
-                        "Invalid DHCPv6 option OPTION_DOMAIN_LIST length",
-                    )?;
                     domains.push(
-                        tmp_opt_buf
-                            .get_string_with_null(str_len.into())
-                            .context(
-                                "Invalid DHCPv6 option OPTION_DOMAIN_LIST \
-                                 domain",
-                            )?,
+                        parse_domain_name(&mut tmp_opt_buf).context(
+                            "Invalid DHCPv6 option OPTION_DOMAIN_LIST",
+                        )?,
                     );
                 }
                 Self::DomainList(domains)
@@ -519,8 +520,7 @@ impl DhcpV6Option {
             Self::DomainList(domains) => {
                 let mut value_buf = BufferMut::new();
                 for domain in domains {
-                    value_buf.write_u8((domain.len() + 1) as u8);
-                    value_buf.write_string_with_null(domain, domain.len() + 1);
+                    write_domain_name(&mut value_buf, domain);
                 }
                 buf.write_u16_be(self.code().into());
                 buf.write_u16_be(value_buf.len() as u16);
@@ -542,6 +542,76 @@ impl DhcpV6Option {
             }
         }
     }
+}
+
+fn parse_domain_name(buf: &mut Buffer) -> Result<String, DhcpError> {
+    let mut labels = Vec::new();
+    let mut name_len = 1usize; // The root label.
+    let mut label_count = 0usize;
+    loop {
+        if label_count >= DNS_MAX_LABELS {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                format!("Domain name exceeds {DNS_MAX_LABELS} labels"),
+            ));
+        }
+        let label_len =
+            buf.get_u8().context("Invalid domain name label length")?;
+        if (label_len & DNS_LABEL_LENGTH_MASK) != 0 {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                format!(
+                    "Invalid domain name label length {label_len}: \
+                     compression is not supported"
+                ),
+            ));
+        }
+        if label_len == 0 {
+            break;
+        }
+        label_count += 1;
+        let label_len = usize::from(label_len);
+        name_len += 1 + label_len;
+        if name_len > DNS_NAME_MAX_LEN {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                format!("Domain name exceeds {DNS_NAME_MAX_LEN} octets"),
+            ));
+        }
+        let label = buf
+            .get_bytes(label_len)
+            .context("Invalid domain name label")?;
+        let label = std::str::from_utf8(label).map_err(|e| {
+            DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                format!("Domain name label is not valid UTF-8: {e}"),
+            )
+        })?;
+        labels.push(label.to_string());
+    }
+    Ok(labels.join("."))
+}
+
+fn write_domain_name(buf: &mut BufferMut, domain: &str) {
+    let domain = domain.strip_suffix('.').unwrap_or(domain);
+    if domain.is_empty() {
+        buf.write_u8(0);
+        return;
+    }
+    for label in domain.split('.') {
+        let label_len = label.len();
+        if label_len == 0 || label_len > DNS_LABEL_MAX_LEN {
+            log::warn!(
+                "Ignore invalid domain name in DHCPv6 option: label length \
+                 {label_len}"
+            );
+            buf.write_u8(0);
+            return;
+        }
+        buf.write_u8(label_len as u8);
+        buf.write_bytes(label.as_bytes());
+    }
+    buf.write_u8(0);
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
@@ -616,36 +686,23 @@ impl DhcpV6OptionNtpServer {
                 Self::MulticastAddr(Ipv6Addr::from(octets))
             }
             NTP_SUBOPTION_SRV_FQDN => Self::ServerFqdn({
-                let mut lables = Vec::new();
                 let raw = buf.get_bytes(subopt_len.into()).context(
                     "Invalid OPTION_NTP_SERVER NTP_SUBOPTION_SRV_FQDN",
                 )?;
                 let mut fqdn_buf = Buffer::new(raw);
-                while !fqdn_buf.is_empty() {
-                    let lable_len = fqdn_buf.get_u8().context(
-                        "Invalid OPTION_NTP_SERVER NTP_SUBOPTION_SRV_FQDN",
-                    )?;
-                    if lable_len == 0 {
-                        break;
-                    }
-                    let lable_raw =
-                        fqdn_buf.get_bytes(lable_len as usize).context(
-                            "Invalid OPTION_NTP_SERVER NTP_SUBOPTION_SRV_FQDN",
-                        )?;
-                    match std::str::from_utf8(lable_raw) {
-                        Ok(l) => lables.push(l.to_string()),
-                        Err(e) => {
-                            return Err(DhcpError::new(
-                                ErrorKind::InvalidDhcpMessage,
-                                format!(
-                                    "Invalid OPTION_NTP_SERVER \
-                                     NTP_SUBOPTION_SRV_FQDN: {e}"
-                                ),
-                            ));
-                        }
-                    }
+                let fqdn = parse_domain_name(&mut fqdn_buf).context(
+                    "Invalid OPTION_NTP_SERVER NTP_SUBOPTION_SRV_FQDN",
+                )?;
+                if !fqdn_buf.is_empty() {
+                    return Err(DhcpError::new(
+                        ErrorKind::InvalidDhcpMessage,
+                        format!(
+                            "Invalid NTP SRV_FQDN subopt_len {subopt_len}, \
+                             trailing data after domain name"
+                        ),
+                    ));
                 }
-                lables.join(".").to_string()
+                fqdn
             }),
             _ => Self::Other((
                 subopt_type,
@@ -672,9 +729,11 @@ impl DhcpV6OptionNtpServer {
                 buf.write_ipv6(*ip);
             }
             Self::ServerFqdn(name) => {
+                let mut value_buf = BufferMut::new();
+                write_domain_name(&mut value_buf, name);
                 buf.write_u16_be(NTP_SUBOPTION_SRV_FQDN);
-                buf.write_u16_be((name.len() + 1) as u16);
-                buf.write_string_with_null(name, name.len() + 1);
+                buf.write_u16_be(value_buf.len() as u16);
+                buf.write_bytes(value_buf.data.as_slice());
             }
             Self::Other((subopt_type, v)) => {
                 buf.write_u16_be(*subopt_type);
@@ -793,6 +852,144 @@ mod test {
             DhcpV6OptionNtpServer::ServerAddr(Ipv6Addr::new(
                 0x2001, 0x0DB8, 0, 0, 0, 0, 0, 1
             ))
+        );
+    }
+
+    #[test]
+    fn domain_list_parses_rfc1035_labels() {
+        // OPTION_DOMAIN_LIST with "www.example.com" and "ntp.example.org"
+        // encoded as RFC 1035 labels.
+        let raw: Vec<u8> = vec![
+            0x00, 0x18, // OPTION_DOMAIN_LIST
+            0x00, 0x22, // option-len = 34
+            0x03, b'w', b'w', b'w', 0x07, b'e', b'x', b'a', b'm', b'p', b'l',
+            b'e', 0x03, b'c', b'o', b'm', 0x00, 0x03, b'n', b't', b'p', 0x07,
+            b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0x03, b'o', b'r', b'g',
+            0x00,
+        ];
+        let mut buf = Buffer::new(&raw);
+        let opt = DhcpV6Option::parse(&mut buf).expect("valid domain list");
+        assert_eq!(
+            opt,
+            DhcpV6Option::DomainList(vec![
+                "www.example.com".to_string(),
+                "ntp.example.org".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn domain_list_emit_uses_rfc1035_labels() {
+        let opt = DhcpV6Option::DomainList(vec![
+            "www.example.com".to_string(),
+            "ntp.example.org".to_string(),
+        ]);
+        let mut buf = BufferMut::new();
+        opt.emit(&mut buf);
+        let expected: Vec<u8> = vec![
+            0x00, 0x18, // OPTION_DOMAIN_LIST
+            0x00, 0x22, // option-len = 34
+            0x03, b'w', b'w', b'w', 0x07, b'e', b'x', b'a', b'm', b'p', b'l',
+            b'e', 0x03, b'c', b'o', b'm', 0x00, 0x03, b'n', b't', b'p', 0x07,
+            b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0x03, b'o', b'r', b'g',
+            0x00,
+        ];
+        assert_eq!(buf.data, expected);
+    }
+
+    #[test]
+    fn domain_list_accepts_maximum_rfc1035_labels() {
+        // 127 single-character labels is the maximum allowed by
+        // RFC 1035's 255-octet name limit.
+        let mut value = Vec::new();
+        for _ in 0..127 {
+            value.push(1);
+            value.push(b'a');
+        }
+        value.push(0);
+
+        let mut raw = vec![0x00, 0x18]; // OPTION_DOMAIN_LIST
+        raw.extend_from_slice(&(value.len() as u16).to_be_bytes());
+        raw.extend(value);
+
+        let mut buf = Buffer::new(&raw);
+        let opt = DhcpV6Option::parse(&mut buf).expect("maximum labels");
+        assert_eq!(
+            opt,
+            DhcpV6Option::DomainList(
+                vec![vec!["a".to_string(); 127].join(".")]
+            )
+        );
+    }
+
+    #[test]
+    fn ntp_server_fqdn_parses_rfc1035_labels() {
+        // OPTION_NTP_SERVER with SRV_FQDN suboption carrying
+        // "ntp.example.com" encoded as RFC 1035 labels.
+        let raw: Vec<u8> = vec![
+            0x00, 0x38, // OPTION_NTP_SERVER
+            0x00, 0x15, // option-len = 21
+            0x00, 0x03, // SRV_FQDN
+            0x00, 0x11, // subopt-len = 17
+            0x03, b'n', b't', b'p', 0x07, b'e', b'x', b'a', b'm', b'p', b'l',
+            b'e', 0x03, b'c', b'o', b'm', 0x00,
+        ];
+        let mut buf = Buffer::new(&raw);
+        let opt = DhcpV6Option::parse(&mut buf).expect("valid NTP server");
+        assert_eq!(
+            opt,
+            DhcpV6Option::NtpServer(vec![DhcpV6OptionNtpServer::ServerFqdn(
+                "ntp.example.com".to_string()
+            )])
+        );
+    }
+
+    #[test]
+    fn ntp_server_fqdn_emit_uses_rfc1035_labels() {
+        let opt =
+            DhcpV6Option::NtpServer(vec![DhcpV6OptionNtpServer::ServerFqdn(
+                "ntp.example.com".to_string(),
+            )]);
+        let mut buf = BufferMut::new();
+        opt.emit(&mut buf);
+        let expected: Vec<u8> = vec![
+            0x00, 0x38, // OPTION_NTP_SERVER
+            0x00, 0x15, // option-len = 21
+            0x00, 0x03, // SRV_FQDN
+            0x00, 0x11, // subopt-len = 17
+            0x03, b'n', b't', b'p', 0x07, b'e', b'x', b'a', b'm', b'p', b'l',
+            b'e', 0x03, b'c', b'o', b'm', 0x00,
+        ];
+        assert_eq!(buf.data, expected);
+    }
+
+    #[test]
+    fn ntp_server_fqdn_emit_parse_round_trip() {
+        let opt =
+            DhcpV6Option::NtpServer(vec![DhcpV6OptionNtpServer::ServerFqdn(
+                "ntp.example.com".to_string(),
+            )]);
+        let mut buf = BufferMut::new();
+        opt.emit(&mut buf);
+        let mut buf = Buffer::new(&buf.data);
+        let parsed = DhcpV6Option::parse(&mut buf).expect("round-trip parse");
+        assert_eq!(parsed, opt);
+    }
+
+    #[test]
+    fn ntp_server_fqdn_trailing_bytes_rejected() {
+        // subopt-len is 18, but the FQDN is only 17 bytes, leaving one
+        // byte after the root label.
+        let raw: Vec<u8> = vec![
+            0x00, 0x03, // SRV_FQDN
+            0x00, 0x12, // subopt-len = 18
+            0x03, b'n', b't', b'p', 0x07, b'e', b'x', b'a', b'm', b'p', b'l',
+            b'e', 0x03, b'c', b'o', b'm', 0x00, 0x01, // trailing byte
+        ];
+        let mut buf = Buffer::new(&raw);
+        assert!(
+            DhcpV6OptionNtpServer::parse(&mut buf).is_err(),
+            "expected Err for NTP SRV_FQDN with trailing data"
         );
     }
 }
