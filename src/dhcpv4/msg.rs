@@ -351,8 +351,6 @@ impl DhcpV4Message {
         let mut ret = Self::new(xid, config);
         ret.options
             .insert(DhcpV4Option::MessageType(DhcpV4MessageType::Request));
-        ret.options
-            .insert(DhcpV4Option::ServerIdentifier(lease.srv_id));
         if lease.srv_id != Ipv4Addr::UNSPECIFIED {
             ret.options
                 .insert(DhcpV4Option::ServerIdentifier(lease.srv_id));
@@ -519,6 +517,53 @@ mod test {
                 .unwrap()
                 .ciaddr,
             lease.yiaddr
+        );
+    }
+
+    #[test]
+    fn test_request_msg_server_identifier() {
+        let mut config = DhcpV4Config::new("eth1");
+        config
+            .set_iface_mac_raw(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01])
+            .unwrap()
+            .use_mac_as_client_id();
+
+        let mut opts = DhcpV4Options::new();
+        opts.insert(DhcpV4Option::IpAddressLeaseTime(100));
+        opts.insert(DhcpV4Option::ServerIdentifier(Ipv4Addr::new(
+            192, 0, 2, 1,
+        )));
+        let lease = DhcpV4Lease::new_from_msg(&DhcpV4Message {
+            yiaddr: Ipv4Addr::new(192, 0, 2, 115),
+            options: opts,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let msg = DhcpV4Message::new_request(0x20260823, &config, &lease);
+        assert_eq!(
+            msg.options.get(DhcpV4OptionCode::ServerIdentifier),
+            Some(&DhcpV4Option::ServerIdentifier(lease.srv_id))
+        );
+
+        // Without a server identifier, fall back to the next-server
+        // address.
+        let mut fallback_opts = DhcpV4Options::new();
+        fallback_opts.insert(DhcpV4Option::IpAddressLeaseTime(100));
+        let fallback_lease = DhcpV4Lease::new_from_msg(&DhcpV4Message {
+            siaddr: Ipv4Addr::new(192, 0, 2, 1),
+            yiaddr: Ipv4Addr::new(192, 0, 2, 115),
+            options: fallback_opts,
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(fallback_lease.srv_id.is_unspecified());
+
+        let msg =
+            DhcpV4Message::new_request(0x20260823, &config, &fallback_lease);
+        assert_eq!(
+            msg.options.get(DhcpV4OptionCode::ServerIdentifier),
+            Some(&DhcpV4Option::ServerIdentifier(fallback_lease.siaddr))
         );
     }
 }

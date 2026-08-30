@@ -1,9 +1,3 @@
-- `new_request()` (`src/dhcpv4/msg.rs`) inserts
-  `ServerIdentifier` twice: first unconditionally, then again in
-  the `srv_id != UNSPECIFIED` branch. Harmless on the wire
-  (`DhcpV4Options::insert()` is a `HashMap` insert keyed by option
-  code, second overwrites first), but the unconditional insert is
-  dead code.
 - Lacking integration test without `netlink` feature. The
   4 netns integ tests create clients by interface name only and
   `unwrap()` on `init()`, which needs `resolve()`; built with
