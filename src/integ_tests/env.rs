@@ -7,17 +7,24 @@ use std::{
     str::FromStr,
 };
 
+use crate::ETH_ALEN;
+
+#[cfg(feature = "netlink")]
 const UDHCPD_CONF: &str = "/tmp/mozim_test_udhcpd.conf";
+#[cfg(feature = "netlink")]
 const UDHCPD_PID_FILE_PATH: &str = "/tmp/mozim_test_udhcpd.pid";
 const PID_FILE_PATH: &str = "/tmp/mozim_test_dnsmasq_pid";
 const TEST_DHCPD_NETNS: &str = "mozim_test";
 const LOG_FILE: &str = "/tmp/mozim_test_dnsmasq_log";
 pub(crate) const TEST_NIC_CLI: &str = "dhcpcli";
 const TEST_NIC_CLI_MAC: &str = "00:23:45:67:89:1a";
+pub(crate) const TEST_NIC_CLI_MAC_RAW: [u8; ETH_ALEN] =
+    [0x00, 0x23, 0x45, 0x67, 0x89, 0x1a];
 pub(crate) const TEST_PROXY_MAC1: &str = "00:11:22:33:44:55";
 const TEST_NIC_SRV: &str = "dhcpsrv";
 
 const TEST_DHCP_SRV_IP: &str = "192.0.2.1";
+#[cfg(feature = "netlink")]
 pub(crate) const TEST_DHCP_SRV_ADDR: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
 const TEST_DHCP_SRV_IPV6: &str = "2001:db8:a::1";
 pub(crate) const TEST_CLS_DST: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 0);
@@ -141,6 +148,7 @@ fn stop_dhcp_server() {
     run_cmd_ignore_failure(&format!("kill {pid}"));
 }
 
+#[cfg(feature = "netlink")]
 fn write_udhcpd_conf() {
     std::fs::write(
         UDHCPD_CONF,
@@ -164,6 +172,7 @@ no_ping
     .unwrap();
 }
 
+#[cfg(feature = "netlink")]
 fn start_udhcpd() {
     write_udhcpd_conf();
 
@@ -184,6 +193,7 @@ fn start_udhcpd() {
     std::thread::sleep(std::time::Duration::from_secs(1));
 }
 
+#[cfg(feature = "netlink")]
 fn stop_udhcpd() {
     if !std::path::Path::new(UDHCPD_PID_FILE_PATH).exists() {
         log::warn!("PID file {UDHCPD_PID_FILE_PATH} does not exist");
@@ -230,10 +240,43 @@ fn run_cmd_ignore_failure(cmd: &str) -> String {
     }
 }
 
+pub(crate) fn get_iface_index(iface_name: &str) -> u32 {
+    let output = run_cmd(&format!("ip -o link show {iface_name}"));
+    output
+        .split(':')
+        .next()
+        .unwrap_or_else(|| {
+            panic!("Failed to get interface index of {iface_name}: {output}")
+        })
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| {
+            panic!("Failed to parse interface index of {iface_name}: {output}")
+        })
+}
+
+pub(crate) fn get_link_local_addr(iface_name: &str) -> Ipv6Addr {
+    let output =
+        run_cmd(&format!("ip -6 addr show dev {iface_name} scope link"));
+    let line = output
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("inet6 "))
+        .unwrap_or_else(|| {
+            panic!("No link-local address found for {iface_name}: {output}")
+        });
+    let addr = line.trim_start_matches("inet6 ").split('/').next().unwrap();
+    Ipv6Addr::from_str(addr).unwrap_or_else(|_| {
+        panic!("Invalid link-local address {addr} of {iface_name}")
+    })
+}
+
+#[cfg(feature = "netlink")]
 pub(crate) fn set_client_ip(address: Ipv4Addr) {
     run_cmd(&format!("ip addr add {address}/24 dev {TEST_NIC_CLI}",));
 }
 
+#[cfg(feature = "netlink")]
 pub(crate) fn set_client_nic_down() {
     run_cmd(&format!("ip link set {TEST_NIC_CLI} down"));
 }
@@ -257,6 +300,7 @@ where
     assert!(result.is_ok())
 }
 
+#[cfg(feature = "netlink")]
 pub(crate) fn with_udhcpd_env<T>(test: T)
 where
     T: FnOnce() + std::panic::UnwindSafe,

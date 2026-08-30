@@ -49,3 +49,8 @@ jobs:
         # Needed for the `link::test::create_get_delete_w` test to pass.
         CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: "sudo -E"
       run: cargo test -- --test-threads=1 --show-output
+
+    - name: Run test without default feature
+      env:
+        CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: "sudo -E"
+      run: cargo test --no-default-features -- --test-threads=1 --show-output
