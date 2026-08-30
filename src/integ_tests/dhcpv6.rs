@@ -20,6 +20,17 @@ fn test_dhcpv6() {
             // call to use_host_name_as_client_id(), then the server should
             // return FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID.
             assert_eq!(lease.address, FOO1_STATIC_IPV6);
+            assert_eq!(
+                lease.domain_list,
+                vec!["example.com".to_string(), "example.org".to_string()]
+            );
+            assert_eq!(
+                lease.ntp_srvs,
+                vec![
+                    "ntp.example.com".to_string(),
+                    "ntp2.example.com".to_string(),
+                ]
+            );
         }
     })
 }

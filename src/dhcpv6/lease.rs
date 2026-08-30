@@ -5,7 +5,7 @@ use std::{net::Ipv6Addr, time::Duration};
 use super::{msg::DhcpV6Message, option::DhcpV6Options};
 use crate::{
     DhcpError, DhcpV6Duid, DhcpV6IaType, DhcpV6Option, DhcpV6OptionCode,
-    ErrorKind,
+    DhcpV6OptionNtpServer, ErrorKind,
 };
 
 // Section 5 of RFC4941, one week
@@ -29,7 +29,11 @@ pub struct DhcpV6Lease {
     pub cli_duid: DhcpV6Duid,
     pub srv_duid: DhcpV6Duid,
     pub srv_ip: Ipv6Addr,
+    /// NTP servers from OPTION_NTP_SERVER (RFC 5908). Addresses are
+    /// strings; FQDNs are kept as received.
     pub ntp_srvs: Vec<String>,
+    /// Domain search list from OPTION_DOMAIN_LIST (RFC 3646).
+    pub domain_list: Vec<String>,
     dhcp_opts: DhcpV6Options,
 }
 
@@ -50,6 +54,7 @@ impl Default for DhcpV6Lease {
             dhcp_opts: DhcpV6Options::default(),
             srv_ip: Ipv6Addr::UNSPECIFIED,
             ntp_srvs: Vec::new(),
+            domain_list: Vec::new(),
         }
     }
 }
@@ -201,6 +206,30 @@ impl DhcpV6Lease {
         {
             ret.srv_ip = *srv_ip;
         }
+        if let Some(DhcpV6Option::NtpServer(srvs)) =
+            msg.options.get_first(DhcpV6OptionCode::NtpServer)
+        {
+            ret.ntp_srvs = srvs
+                .iter()
+                .filter_map(|srv| match srv {
+                    DhcpV6OptionNtpServer::ServerAddr(ip) => {
+                        Some(ip.to_string())
+                    }
+                    DhcpV6OptionNtpServer::MulticastAddr(ip) => {
+                        Some(ip.to_string())
+                    }
+                    DhcpV6OptionNtpServer::ServerFqdn(fqdn) => {
+                        Some(fqdn.clone())
+                    }
+                    DhcpV6OptionNtpServer::Other(..) => None,
+                })
+                .collect();
+        }
+        if let Some(DhcpV6Option::DomainList(domains)) =
+            msg.options.get_first(DhcpV6OptionCode::DomainList)
+        {
+            ret.domain_list = domains.clone();
+        }
         if let Some(DhcpV6Option::StatusCode(v)) =
             msg.options.get_first(DhcpV6OptionCode::StatusCode)
         {
@@ -267,5 +296,58 @@ impl DhcpV6Lease {
             ));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::net::Ipv6Addr;
+
+    use super::*;
+    use crate::{
+        dhcpv6::msg::DhcpV6MessageType, DhcpV6OptionIaAddr, DhcpV6OptionIaNa,
+    };
+
+    #[test]
+    fn lease_reads_ntp_fqdn_and_domain_list() {
+        let mut msg = DhcpV6Message {
+            msg_type: DhcpV6MessageType::Advertise,
+            ..Default::default()
+        };
+        msg.options
+            .insert(DhcpV6Option::ClientId(DhcpV6Duid::Raw(vec![1])));
+        msg.options
+            .insert(DhcpV6Option::ServerId(DhcpV6Duid::Raw(vec![2])));
+        msg.options.insert(DhcpV6Option::DomainList(vec![
+            "example.com".to_string(),
+            "example.org".to_string(),
+        ]));
+        msg.options.insert(DhcpV6Option::NtpServer(vec![
+            DhcpV6OptionNtpServer::ServerFqdn("ntp.example.com".to_string()),
+            DhcpV6OptionNtpServer::ServerFqdn("ntp2.example.com".to_string()),
+        ]));
+        msg.options.insert(DhcpV6Option::IANA(DhcpV6OptionIaNa::new(
+            1,
+            60,
+            90,
+            DhcpV6OptionIaAddr::new(
+                Ipv6Addr::new(0x2001, 0x0db8, 0x000a, 0, 0, 0, 0, 0x99),
+                120,
+                240,
+            ),
+        )));
+
+        let lease = DhcpV6Lease::new_from_msg(&msg).unwrap();
+        assert_eq!(
+            lease.domain_list,
+            vec!["example.com".to_string(), "example.org".to_string()]
+        );
+        assert_eq!(
+            lease.ntp_srvs,
+            vec![
+                "ntp.example.com".to_string(),
+                "ntp2.example.com".to_string(),
+            ]
+        );
     }
 }

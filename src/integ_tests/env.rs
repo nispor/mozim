@@ -94,6 +94,8 @@ fn start_dhcp_server() {
         --dhcp-option=option:mtu,1492
         --dhcp-option=option:domain-name,example.com
         --dhcp-option=option:ntp-server,192.0.2.1
+        --dhcp-option=option6:domain-search,example.com,example.org
+        --dhcp-option=option6:ntp-server,ntp.example.com,ntp2.example.com
         --dhcp-option=121,{TEST_CLS_DST}/{TEST_CLS_DST_LEN},{TEST_CLS_RT_ADDR}
         --dhcp-option=249,{TEST_CLS_DST}/{TEST_CLS_DST_LEN},{TEST_CLS_RT_ADDR}
         --bind-interfaces
