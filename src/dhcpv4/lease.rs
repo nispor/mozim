@@ -213,7 +213,7 @@ fn add_jitter(val: u32) -> u32 {
     if val < 20 {
         return val;
     }
-    val + rand::random_range(0..4) - 2
+    val + rand::random_range(0..5) - 2
 }
 
 #[cfg(test)]
@@ -372,5 +372,25 @@ mod test {
             .lease()
             .unwrap();
         assert_eq!(lease.srv_mac, srv_mac);
+    }
+
+    #[test]
+    fn test_add_jitter_range() {
+        let val = 1000;
+        let mut min_jitter = i32::MAX;
+        let mut max_jitter = i32::MIN;
+        for _ in 0..1000 {
+            let jitter = add_jitter(val) as i32 - val as i32;
+            min_jitter = min_jitter.min(jitter);
+            max_jitter = max_jitter.max(jitter);
+        }
+        assert_eq!((min_jitter, max_jitter), (-2, 2));
+    }
+
+    #[test]
+    fn test_add_jitter_below_threshold_unchanged() {
+        for val in [0, 1, 19] {
+            assert_eq!(add_jitter(val), val);
+        }
     }
 }
