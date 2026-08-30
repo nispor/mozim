@@ -99,16 +99,6 @@ impl DhcpV6Lease {
                     ret.iaid = v.iaid;
                     ret.t1_sec = v.t1_sec;
                     ret.t2_sec = v.t2_sec;
-                    // RFC 8415 14.2. Client Behavior when T1 and/or T2 Are 0
-                    // This is an indication that the renew and rebind times are
-                    // left to the discretion of the client.
-                    if ret.t1_sec == 0 && ret.preferred_time_sec != 0 {
-                        ret.t1_sec = ret.preferred_time_sec / 2;
-                    }
-                    if ret.t2_sec == 0 && ret.preferred_time_sec != 0 {
-                        ret.t2_sec = ret.preferred_time_sec / 2
-                            + ret.preferred_time_sec / 4;
-                    }
                 }
             } else if let Some(status) = v.status.as_ref() {
                 log::info!(
@@ -172,16 +162,6 @@ impl DhcpV6Lease {
                     ret.iaid = v.iaid;
                     ret.t1_sec = v.t1_sec;
                     ret.t2_sec = v.t2_sec;
-                    // RFC 8415 14.2. Client Behavior when T1 and/or T2 Are 0
-                    // This is an indication that the renew and rebind times are
-                    // left to the discretion of the client.
-                    if ret.t1_sec == 0 && ret.preferred_time_sec != 0 {
-                        ret.t1_sec = ret.preferred_time_sec / 2;
-                    }
-                    if ret.t2_sec == 0 && ret.preferred_time_sec != 0 {
-                        ret.t2_sec = ret.preferred_time_sec / 2
-                            + ret.preferred_time_sec / 4;
-                    }
                 }
             } else if let Some(status) = v.status.as_ref() {
                 log::info!(
@@ -248,7 +228,30 @@ impl DhcpV6Lease {
         Ok(ret)
     }
 
-    fn sanitize_lease(&self) -> Result<(), DhcpError> {
+    pub(crate) fn sanitize_lease(&mut self) -> Result<(), DhcpError> {
+        // RFC 8415 14.2. Client Behavior when T1 and/or T2 Are 0.
+        // Zero means the renew and rebind times are left to the
+        // discretion of the client, so pick a non-zero default to
+        // avoid renewing immediately.
+        if self.t1_sec == 0 && self.preferred_time_sec != 0 {
+            self.t1_sec = self.preferred_time_sec / 2;
+        }
+        if self.t2_sec == 0 && self.preferred_time_sec != 0 {
+            self.t2_sec =
+                self.preferred_time_sec / 2 + self.preferred_time_sec / 4;
+        }
+        if self.t1_sec == 0 {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                "DHCPv6 lease contains zero T1".to_string(),
+            ));
+        }
+        if self.t2_sec == 0 {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                "DHCPv6 lease contains zero T2".to_string(),
+            ));
+        }
         if self.t1_sec > self.t2_sec {
             return Err(DhcpError::new(
                 ErrorKind::InvalidDhcpMessage,
