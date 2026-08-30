@@ -27,6 +27,19 @@ impl<'a> Buffer<'a> {
         }
     }
 
+    pub(crate) fn data(&self) -> &'a [u8] {
+        self.data
+    }
+
+    pub(crate) fn pos(&self) -> usize {
+        self.index
+    }
+
+    pub(crate) fn set_pos(&mut self, pos: usize) {
+        debug_assert!(pos <= self.data.len());
+        self.index = pos;
+    }
+
     pub(crate) fn peek_u16_be(&self) -> Result<u16, DhcpError> {
         if self.remain_len() < 2 {
             return Err(DhcpError::new(

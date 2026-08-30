@@ -117,7 +117,8 @@ const DNS_NAME_MAX_LEN: usize = 255;
 // A 255-octet name with 1-octet labels can contain at most 127
 // labels, so 128 is the maximum possible loop count.
 const DNS_MAX_LABELS: usize = 128;
-// RFC 1035: the high two bits of a label length must be zero.
+// RFC 1035: a label length has its two high bits clear; when both high
+// bits are set, the octet is a compression pointer (section 4.1.4).
 const DNS_LABEL_LENGTH_MASK: u8 = 0xC0;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, Default)]
@@ -416,7 +417,11 @@ impl DhcpV6Option {
                 //      root, a domain name is terminated by a length byte of
                 //      zero.  The high order two bits of every length octet
                 //      must be zero, and the remaining six bits of the length
-                //      field limit the label to 63 octets or less.
+                //      field limit the label to 63 octets or less.  When
+                //      both high bits are set, the octet is a compression
+                //      pointer to a prior occurrence (RFC 1035 section
+                //      4.1.4).  RFC 8415 section 10 forbids compression in
+                //      DHCPv6, but broken servers send it anyway.
                 opt_buf.get_u16_be().context("Invalid DHCPv6 option code")?;
                 opt_buf
                     .get_u16_be()
@@ -545,9 +550,18 @@ impl DhcpV6Option {
 }
 
 fn parse_domain_name(buf: &mut Buffer) -> Result<String, DhcpError> {
+    let data = buf.data();
+    let mut pos = buf.pos();
     let mut labels = Vec::new();
     let mut name_len = 1usize; // The root label.
     let mut label_count = 0usize;
+    // Pointers are resolved against the start of the value passed in via
+    // `buf`, matching the option-data buffers used by the DHCPv6 options.
+    // RFC 1035 section 4.1.4: pointers reference a prior occurrence, so
+    // each jump must go strictly backwards. This also prevents loops.
+    let mut jump_barrier = pos;
+    let mut resume_pos = None;
+
     loop {
         if label_count >= DNS_MAX_LABELS {
             return Err(DhcpError::new(
@@ -555,22 +569,63 @@ fn parse_domain_name(buf: &mut Buffer) -> Result<String, DhcpError> {
                 format!("Domain name exceeds {DNS_MAX_LABELS} labels"),
             ));
         }
-        let label_len =
-            buf.get_u8().context("Invalid domain name label length")?;
+        if pos >= data.len() {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                "Invalid domain name label length".to_string(),
+            ));
+        }
+        let label_len = data[pos];
+        pos += 1;
+
+        if (label_len & DNS_LABEL_LENGTH_MASK) == DNS_LABEL_LENGTH_MASK {
+            // RFC 1035 section 4.1.4 compression pointer.
+            if pos >= data.len() {
+                return Err(DhcpError::new(
+                    ErrorKind::InvalidDhcpMessage,
+                    "Invalid domain name pointer: missing offset".to_string(),
+                ));
+            }
+            let pointer = (usize::from(label_len & !DNS_LABEL_LENGTH_MASK)
+                << 8)
+                | usize::from(data[pos]);
+            pos += 1;
+            if pointer >= jump_barrier {
+                return Err(DhcpError::new(
+                    ErrorKind::InvalidDhcpMessage,
+                    format!(
+                        "Invalid domain name pointer {pointer}: must point to \
+                         a prior occurrence"
+                    ),
+                ));
+            }
+            jump_barrier = pointer;
+            resume_pos.get_or_insert(pos);
+            pos = pointer;
+            continue;
+        }
+
         if (label_len & DNS_LABEL_LENGTH_MASK) != 0 {
             return Err(DhcpError::new(
                 ErrorKind::InvalidDhcpMessage,
                 format!(
-                    "Invalid domain name label length {label_len}: \
-                     compression is not supported"
+                    "Invalid domain name label length {label_len}: reserved \
+                     encoding"
                 ),
             ));
         }
         if label_len == 0 {
             break;
         }
-        label_count += 1;
+
         let label_len = usize::from(label_len);
+        if pos + label_len > data.len() {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                "Invalid domain name label: truncated".to_string(),
+            ));
+        }
+        label_count += 1;
         name_len += 1 + label_len;
         if name_len > DNS_NAME_MAX_LEN {
             return Err(DhcpError::new(
@@ -578,9 +633,8 @@ fn parse_domain_name(buf: &mut Buffer) -> Result<String, DhcpError> {
                 format!("Domain name exceeds {DNS_NAME_MAX_LEN} octets"),
             ));
         }
-        let label = buf
-            .get_bytes(label_len)
-            .context("Invalid domain name label")?;
+        let label = &data[pos..pos + label_len];
+        pos += label_len;
         let label = std::str::from_utf8(label).map_err(|e| {
             DhcpError::new(
                 ErrorKind::InvalidDhcpMessage,
@@ -589,6 +643,8 @@ fn parse_domain_name(buf: &mut Buffer) -> Result<String, DhcpError> {
         })?;
         labels.push(label.to_string());
     }
+
+    buf.set_pos(resume_pos.unwrap_or(pos));
     Ok(labels.join("."))
 }
 
@@ -920,6 +976,107 @@ mod test {
                 vec![vec!["a".to_string(); 127].join(".")]
             )
         );
+    }
+
+    #[test]
+    fn domain_list_parses_pointer_to_previous_name() {
+        // OPTION_DOMAIN_LIST containing "www.example.com" followed by an
+        // RFC 1035 pointer (0xC0 0x00) back to that name.
+        let raw: Vec<u8> = vec![
+            0x00, 0x18, // OPTION_DOMAIN_LIST
+            0x00, 0x13, // option-len = 19
+            0x03, b'w', b'w', b'w', 0x07, b'e', b'x', b'a', b'm', b'p', b'l',
+            b'e', 0x03, b'c', b'o', b'm', 0x00, 0xC0, 0x00,
+        ];
+        let mut buf = Buffer::new(&raw);
+        let opt = DhcpV6Option::parse(&mut buf).expect("valid domain list");
+        assert_eq!(
+            opt,
+            DhcpV6Option::DomainList(vec![
+                "www.example.com".to_string(),
+                "www.example.com".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn domain_list_parses_labels_ending_in_pointer() {
+        // "FOO.BAR" followed by "ABC" plus a pointer to the "BAR" label
+        // at offset 4.
+        let raw: Vec<u8> = vec![
+            0x00, 0x18, // OPTION_DOMAIN_LIST
+            0x00, 0x0F, // option-len = 15
+            0x03, b'F', b'O', b'O', 0x03, b'B', b'A', b'R', 0x00, 0x03, b'A',
+            b'B', b'C', 0xC0, 0x04,
+        ];
+        let mut buf = Buffer::new(&raw);
+        let opt = DhcpV6Option::parse(&mut buf).expect("valid domain list");
+        assert_eq!(
+            opt,
+            DhcpV6Option::DomainList(vec![
+                "FOO.BAR".to_string(),
+                "ABC.BAR".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn domain_list_rejects_forward_pointer() {
+        // "FOO" followed by "BAR" whose pointer (0xC0 0x06) points
+        // forward instead of to a prior occurrence.
+        let opts = parse_options(&[
+            0x00, 0x18, // OPTION_DOMAIN_LIST
+            0x00, 0x0B, // option-len = 11
+            0x03, b'F', b'O', b'O', 0x00, 0x03, b'B', b'A', b'R', 0xC0, 0x06,
+        ]);
+        assert!(
+            opts.get_first(DhcpV6OptionCode::DomainList).is_none(),
+            "expected forward pointer to be rejected"
+        );
+    }
+
+    #[test]
+    fn domain_list_rejects_pointer_without_prior_name() {
+        // A pointer as the first name has no prior occurrence to point
+        // to (RFC 1035 section 4.1.4).
+        let opts = parse_options(&[
+            0x00, 0x18, // OPTION_DOMAIN_LIST
+            0x00, 0x02, // option-len = 2
+            0xC0, 0x00,
+        ]);
+        assert!(
+            opts.get_first(DhcpV6OptionCode::DomainList).is_none(),
+            "expected pointer without a prior name to be rejected"
+        );
+    }
+
+    #[test]
+    fn domain_list_rejects_truncated_pointer() {
+        let opts = parse_options(&[
+            0x00, 0x18, // OPTION_DOMAIN_LIST
+            0x00, 0x01, // option-len = 1
+            0xC0,
+        ]);
+        assert!(
+            opts.get_first(DhcpV6OptionCode::DomainList).is_none(),
+            "expected truncated pointer to be rejected"
+        );
+    }
+
+    #[test]
+    fn domain_list_rejects_reserved_label_encodings() {
+        for marker in [0x40u8, 0x80u8] {
+            let opts = parse_options(&[
+                0x00, 0x18, // OPTION_DOMAIN_LIST
+                0x00, 0x01, // option-len = 1
+                marker,
+            ]);
+            assert!(
+                opts.get_first(DhcpV6OptionCode::DomainList).is_none(),
+                "expected reserved label encoding 0x{marker:02x} to be \
+                 rejected"
+            );
+        }
     }
 
     #[test]
