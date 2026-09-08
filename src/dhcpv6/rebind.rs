@@ -110,6 +110,7 @@ impl DhcpV6Client {
             lease,
         );
         let xid = self.xid;
+        let client_duid = self.config.duid.clone();
 
         let udp_socket = self.get_udp_socket_or_init().await?;
 
@@ -122,7 +123,7 @@ impl DhcpV6Client {
         // failing on first DHCP invalid reply
         loop {
             match udp_socket
-                .recv_dhcp_lease(DhcpV6MessageType::Reply, xid)
+                .recv_dhcp_lease(DhcpV6MessageType::Reply, xid, &client_duid)
                 .await
             {
                 Ok(Some(l)) => {

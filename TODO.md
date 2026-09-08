@@ -1,12 +1,3 @@
-- DHCPv6 client accepts Advertise/Reply without checking a Server
-  Identifier is present or that Client Identifier matches the
-  client's own DUID (RFC 8415 section 16.3, 16.10).
-  `recv_dhcp_lease()` (`src/dhcpv6/socket.rs`) only checks xid and
-  message type; `DhcpV6Lease::new_from_msg()`
-  (`src/dhcpv6/lease.rs`) copies whatever `ClientId`/`ServerId`
-  option is present without comparing it to `self.config.duid`.
-  A host that observes the multicast Solicit/Request (or guesses
-  the 24-bit xid) can inject a forged reply.
 - DHCPv6 IA_PD delegated prefix length is never validated.
   `DhcpV6OptionIaPrefix::parse()` (`src/dhcpv6/option_ia.rs`)
   reads `prefix_len` as a raw wire `u8` (0-255) and
