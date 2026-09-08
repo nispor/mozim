@@ -5,7 +5,7 @@ use std::net::{Ipv6Addr, SocketAddrV6};
 use tokio::net::UdpSocket;
 
 use super::msg::{DhcpV6Message, DhcpV6MessageType};
-use crate::{DhcpError, DhcpV6Lease};
+use crate::{DhcpError, DhcpV6Duid, DhcpV6Lease};
 
 /// RFC 8415: All_DHCP_Relay_Agents_and_Servers
 const ALL_DHCP_RELAY_AGENTS_AND_SERVERS: Ipv6Addr =
@@ -85,6 +85,7 @@ impl DhcpUdpV6Socket {
         &self,
         expected: DhcpV6MessageType,
         xid: u32,
+        client_duid: &DhcpV6Duid,
     ) -> Result<Option<DhcpV6Lease>, DhcpError> {
         let buffer: Vec<u8> = self.recv().await?;
         let reply_dhcp_msg = DhcpV6Message::parse(&buffer)?;
@@ -107,7 +108,7 @@ impl DhcpUdpV6Socket {
             );
             return Ok(None);
         }
-        match DhcpV6Lease::new_from_msg(&reply_dhcp_msg) {
+        match DhcpV6Lease::new_from_msg(&reply_dhcp_msg, client_duid) {
             Ok(lease) => Ok(Some(lease)),
             Err(e) => {
                 log::debug!(

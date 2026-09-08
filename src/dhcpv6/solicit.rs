@@ -92,6 +92,7 @@ impl DhcpV6Client {
         let dhcp_packet =
             new_solicit_msg(self.xid, &self.config, &self.trans_begin_time);
         let xid = self.xid;
+        let client_duid = self.config.duid.clone();
         let udp_socket = self.get_udp_socket_or_init().await?;
 
         log::debug!("Sending Solicit");
@@ -106,7 +107,11 @@ impl DhcpV6Client {
             // `OPTION_RAPID_COMMIT`. Since we never set so, it is OK to assume
             // server only reply with Advertise.
             match udp_socket
-                .recv_dhcp_lease(DhcpV6MessageType::Advertise, xid)
+                .recv_dhcp_lease(
+                    DhcpV6MessageType::Advertise,
+                    xid,
+                    &client_duid,
+                )
                 .await
             {
                 Ok(Some(l)) => {

@@ -68,21 +68,41 @@ impl DhcpV6Lease {
         self.dhcp_opts.get_data_raw(code)
     }
 
-    pub(crate) fn new_from_msg(msg: &DhcpV6Message) -> Result<Self, DhcpError> {
+    pub(crate) fn new_from_msg(
+        msg: &DhcpV6Message,
+        expected_cli_duid: &DhcpV6Duid,
+    ) -> Result<Self, DhcpError> {
         let mut ret = Self {
             xid: msg.xid(),
             dhcp_opts: msg.options.clone(),
             ..Default::default()
         };
-        if let Some(DhcpV6Option::ClientId(v)) =
-            msg.options.get_first(DhcpV6OptionCode::ClientId)
-        {
-            ret.cli_duid = v.clone();
-        }
+        // RFC 8415 sections 16.3 and 16.10: a client must discard an
+        // Advertise/Reply that lacks a Server Identifier, lacks a Client
+        // Identifier, or carries a Client Identifier that does not match the
+        // client's DUID.
         if let Some(DhcpV6Option::ServerId(v)) =
             msg.options.get_first(DhcpV6OptionCode::ServerId)
         {
             ret.srv_duid = v.clone();
+        } else {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                "DHCPv6 reply contains no Server Identifier".to_string(),
+            ));
+        }
+        match msg.options.get_first(DhcpV6OptionCode::ClientId) {
+            Some(DhcpV6Option::ClientId(v)) if v == expected_cli_duid => {
+                ret.cli_duid = v.clone();
+            }
+            _ => {
+                return Err(DhcpError::new(
+                    ErrorKind::InvalidDhcpMessage,
+                    "DHCPv6 reply Client Identifier missing or not matching \
+                     this client's DUID"
+                        .to_string(),
+                ));
+            }
         }
         if let Some(DhcpV6Option::IANA(v)) =
             msg.options.get_first(DhcpV6OptionCode::IANA)
@@ -313,12 +333,13 @@ mod test {
 
     #[test]
     fn lease_reads_ntp_fqdn_and_domain_list() {
+        let client_duid = DhcpV6Duid::Raw(vec![1]);
         let mut msg = DhcpV6Message {
             msg_type: DhcpV6MessageType::Advertise,
             ..Default::default()
         };
         msg.options
-            .insert(DhcpV6Option::ClientId(DhcpV6Duid::Raw(vec![1])));
+            .insert(DhcpV6Option::ClientId(client_duid.clone()));
         msg.options
             .insert(DhcpV6Option::ServerId(DhcpV6Duid::Raw(vec![2])));
         msg.options.insert(DhcpV6Option::DomainList(vec![
@@ -340,7 +361,8 @@ mod test {
             ),
         )));
 
-        let lease = DhcpV6Lease::new_from_msg(&msg).unwrap();
+        let lease = DhcpV6Lease::new_from_msg(&msg, &client_duid).unwrap();
+        assert_eq!(lease.cli_duid, client_duid);
         assert_eq!(
             lease.domain_list,
             vec!["example.com".to_string(), "example.org".to_string()]
@@ -351,6 +373,89 @@ mod test {
                 "ntp.example.com".to_string(),
                 "ntp2.example.com".to_string(),
             ]
+        );
+    }
+
+    fn valid_reply_msg(client_duid: &DhcpV6Duid) -> DhcpV6Message {
+        let mut msg = DhcpV6Message {
+            msg_type: DhcpV6MessageType::Reply,
+            ..Default::default()
+        };
+        msg.options
+            .insert(DhcpV6Option::ClientId(client_duid.clone()));
+        msg.options
+            .insert(DhcpV6Option::ServerId(DhcpV6Duid::Raw(vec![2])));
+        msg.options.insert(DhcpV6Option::IANA(DhcpV6OptionIaNa::new(
+            1,
+            60,
+            90,
+            DhcpV6OptionIaAddr::new(
+                Ipv6Addr::new(0x2001, 0x0db8, 0x000a, 0, 0, 0, 0, 0x99),
+                120,
+                240,
+            ),
+        )));
+        msg
+    }
+
+    #[test]
+    fn new_from_msg_accepts_matching_reply_identifiers() {
+        let client_duid = DhcpV6Duid::Raw(vec![1]);
+        let msg = valid_reply_msg(&client_duid);
+
+        let lease = DhcpV6Lease::new_from_msg(&msg, &client_duid).unwrap();
+
+        assert_eq!(lease.cli_duid, client_duid);
+        assert_eq!(lease.srv_duid, DhcpV6Duid::Raw(vec![2]));
+    }
+
+    #[test]
+    fn new_from_msg_rejects_reply_without_server_identifier() {
+        let client_duid = DhcpV6Duid::Raw(vec![1]);
+        let mut msg = valid_reply_msg(&client_duid);
+        msg.options.remove(DhcpV6OptionCode::ServerId);
+
+        let err = DhcpV6Lease::new_from_msg(&msg, &client_duid).unwrap_err();
+
+        assert_eq!(err.kind(), ErrorKind::InvalidDhcpMessage);
+        assert!(
+            err.msg().contains("Server Identifier"),
+            "unexpected error message: {}",
+            err.msg()
+        );
+    }
+
+    #[test]
+    fn new_from_msg_rejects_reply_without_client_identifier() {
+        let client_duid = DhcpV6Duid::Raw(vec![1]);
+        let mut msg = valid_reply_msg(&client_duid);
+        msg.options.remove(DhcpV6OptionCode::ClientId);
+
+        let err = DhcpV6Lease::new_from_msg(&msg, &client_duid).unwrap_err();
+
+        assert_eq!(err.kind(), ErrorKind::InvalidDhcpMessage);
+        assert!(
+            err.msg().contains("Client Identifier"),
+            "unexpected error message: {}",
+            err.msg()
+        );
+    }
+
+    #[test]
+    fn new_from_msg_rejects_mismatched_client_identifier() {
+        let client_duid = DhcpV6Duid::Raw(vec![1]);
+        let mut msg = valid_reply_msg(&client_duid);
+        msg.options.remove(DhcpV6OptionCode::ClientId);
+        msg.options
+            .insert(DhcpV6Option::ClientId(DhcpV6Duid::Raw(vec![2])));
+
+        let err = DhcpV6Lease::new_from_msg(&msg, &client_duid).unwrap_err();
+
+        assert_eq!(err.kind(), ErrorKind::InvalidDhcpMessage);
+        assert!(
+            err.msg().contains("Client Identifier"),
+            "unexpected error message: {}",
+            err.msg()
         );
     }
 }
