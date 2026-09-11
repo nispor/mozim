@@ -7,6 +7,7 @@ use std::{
     str::FromStr,
 };
 
+#[cfg(not(feature = "netlink"))]
 use crate::ETH_ALEN;
 
 #[cfg(feature = "netlink")]
@@ -18,6 +19,7 @@ const TEST_DHCPD_NETNS: &str = "mozim_test";
 const LOG_FILE: &str = "/tmp/mozim_test_dnsmasq_log";
 pub(crate) const TEST_NIC_CLI: &str = "dhcpcli";
 const TEST_NIC_CLI_MAC: &str = "00:23:45:67:89:1a";
+#[cfg(not(feature = "netlink"))]
 pub(crate) const TEST_NIC_CLI_MAC_RAW: [u8; ETH_ALEN] =
     [0x00, 0x23, 0x45, 0x67, 0x89, 0x1a];
 pub(crate) const TEST_PROXY_MAC1: &str = "00:11:22:33:44:55";
@@ -241,6 +243,7 @@ fn run_cmd_ignore_failure(cmd: &str) -> String {
     }
 }
 
+#[cfg(not(feature = "netlink"))]
 pub(crate) fn get_iface_index(iface_name: &str) -> u32 {
     let output = run_cmd(&format!("ip -o link show {iface_name}"));
     output
@@ -256,6 +259,7 @@ pub(crate) fn get_iface_index(iface_name: &str) -> u32 {
         })
 }
 
+#[cfg(not(feature = "netlink"))]
 pub(crate) fn get_link_local_addr(iface_name: &str) -> Ipv6Addr {
     let output =
         run_cmd(&format!("ip -6 addr show dev {iface_name} scope link"));
