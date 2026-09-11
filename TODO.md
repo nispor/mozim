@@ -1,9 +1,3 @@
-- DHCPv6 IA_PD delegated prefix length is never validated.
-  `DhcpV6OptionIaPrefix::parse()` (`src/dhcpv6/option_ia.rs`)
-  reads `prefix_len` as a raw wire `u8` (0-255) and
-  `DhcpV6Lease::sanitize_lease()` (`src/dhcpv6/lease.rs`) checks
-  T1/T2/lifetimes/address/srv_duid but never rejects
-  `prefix_len > 128`, an impossible IPv6 prefix.
 - DHCPv4 client never recognizes DHCPNAK. `recv_dhcp_lease()`
   (`src/dhcpv4/socket.rs`) only compares the reply against one
   `expected` message type, so a NACK during Request/Renew/Rebind

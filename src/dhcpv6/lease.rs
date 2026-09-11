@@ -327,6 +327,19 @@ impl DhcpV6Lease {
                     .to_string(),
             ));
         }
+        // RFC 8415 section 21.22: the "prefix-length" field of an
+        // OPTION_IAPREFIX is the length of an IPv6 prefix in bits, hence
+        // cannot exceed 128.
+        if self.prefix_len > 128 {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                format!(
+                    "DHCPv6 lease contains invalid prefix length {}, should \
+                     be 0 - 128",
+                    self.prefix_len
+                ),
+            ));
+        }
         Ok(())
     }
 }
@@ -338,7 +351,77 @@ mod test {
     use super::*;
     use crate::{
         dhcpv6::msg::DhcpV6MessageType, DhcpV6OptionIaAddr, DhcpV6OptionIaNa,
+        DhcpV6OptionIaPd, DhcpV6OptionIaPrefix,
     };
+
+    fn prefix_delegation_reply(
+        client_duid: &DhcpV6Duid,
+        prefix_len: u8,
+    ) -> DhcpV6Message {
+        let mut msg = DhcpV6Message {
+            msg_type: DhcpV6MessageType::Reply,
+            ..Default::default()
+        };
+        msg.options
+            .insert(DhcpV6Option::ClientId(client_duid.clone()));
+        msg.options
+            .insert(DhcpV6Option::ServerId(DhcpV6Duid::Raw(vec![2])));
+        msg.options.insert(DhcpV6Option::IAPD(DhcpV6OptionIaPd::new(
+            1,
+            60,
+            90,
+            DhcpV6OptionIaPrefix::new(
+                Ipv6Addr::new(0x2001, 0x0db8, 0x000a, 0, 0, 0, 0, 0),
+                prefix_len,
+                120,
+                240,
+            ),
+        )));
+        msg
+    }
+
+    #[test]
+    fn prefix_delegation_rejects_prefix_len_over_128() {
+        let client_duid = DhcpV6Duid::Raw(vec![1]);
+        let msg = prefix_delegation_reply(&client_duid, 129);
+
+        let err = DhcpV6Lease::new_from_msg(&msg, &client_duid).unwrap_err();
+
+        assert_eq!(err.kind(), ErrorKind::InvalidDhcpMessage);
+        assert!(
+            err.msg().contains("prefix length"),
+            "unexpected error message: {}",
+            err.msg()
+        );
+    }
+
+    #[test]
+    fn prefix_delegation_accepts_prefix_len_128() {
+        let client_duid = DhcpV6Duid::Raw(vec![1]);
+        let msg = prefix_delegation_reply(&client_duid, 128);
+
+        let lease = DhcpV6Lease::new_from_msg(&msg, &client_duid).unwrap();
+
+        assert_eq!(lease.prefix_len, 128);
+    }
+
+    #[test]
+    fn sanitize_lease_accepts_unspecified_prefix_len_hint() {
+        let mut lease = DhcpV6Lease {
+            t1_sec: 60,
+            t2_sec: 90,
+            preferred_time_sec: 120,
+            valid_time_sec: 240,
+            address: Ipv6Addr::new(0x2001, 0x0db8, 0x000a, 0, 0, 0, 0, 0),
+            srv_duid: DhcpV6Duid::Raw(vec![2]),
+            prefix_len: 0,
+            ..Default::default()
+        };
+
+        lease.sanitize_lease().unwrap();
+
+        assert_eq!(lease.prefix_len, 0);
+    }
 
     #[test]
     fn lease_reads_ntp_fqdn_and_domain_list() {
