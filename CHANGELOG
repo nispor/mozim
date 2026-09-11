@@ -1,4 +1,15 @@
 # Changelog
+
+## [Unreleased]
+### Breaking changes
+ - N/A
+
+### New features
+ - N/A
+
+### Bug fixes
+ - dhcpv6: reject delegated prefix length over 128.
+
 ## [0.3.3] - 2026-08-30
 ### Breaking changes
  - N/A
