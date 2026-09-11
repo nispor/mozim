@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use std::net::Ipv6Addr;
+
 use super::env::{init_log, with_dhcp_env, FOO1_STATIC_IPV6, TEST_NIC_CLI};
 use crate::{DhcpV6Client, DhcpV6Config, DhcpV6Lease, DhcpV6Mode, DhcpV6State};
 
@@ -29,6 +31,13 @@ fn test_dhcpv6() {
                 vec![
                     "ntp.example.com".to_string(),
                     "ntp2.example.com".to_string(),
+                ]
+            );
+            assert_eq!(
+                lease.dns_srvs,
+                vec![
+                    Ipv6Addr::new(0x2001, 0xdb8, 0xa, 0, 0, 0, 0, 1),
+                    Ipv6Addr::new(0x2001, 0xdb8, 0xa, 0, 0, 0, 0, 2),
                 ]
             );
         }

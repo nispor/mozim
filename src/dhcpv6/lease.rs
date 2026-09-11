@@ -34,6 +34,9 @@ pub struct DhcpV6Lease {
     pub ntp_srvs: Vec<String>,
     /// Domain search list from OPTION_DOMAIN_LIST (RFC 3646).
     pub domain_list: Vec<String>,
+    /// DNS recursive name servers from OPTION_DNS_SERVERS (RFC 3646)
+    /// in server preference order.
+    pub dns_srvs: Vec<Ipv6Addr>,
     dhcp_opts: DhcpV6Options,
 }
 
@@ -55,6 +58,7 @@ impl Default for DhcpV6Lease {
             srv_ip: Ipv6Addr::UNSPECIFIED,
             ntp_srvs: Vec::new(),
             domain_list: Vec::new(),
+            dns_srvs: Vec::new(),
         }
     }
 }
@@ -230,6 +234,11 @@ impl DhcpV6Lease {
         {
             ret.domain_list = domains.clone();
         }
+        if let Some(DhcpV6Option::DnsServers(srvs)) =
+            msg.options.get_first(DhcpV6OptionCode::DnsServers)
+        {
+            ret.dns_srvs = srvs.clone();
+        }
         if let Some(DhcpV6Option::StatusCode(v)) =
             msg.options.get_first(DhcpV6OptionCode::StatusCode)
         {
@@ -372,6 +381,42 @@ mod test {
             vec![
                 "ntp.example.com".to_string(),
                 "ntp2.example.com".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn lease_reads_dns_servers() {
+        let client_duid = DhcpV6Duid::Raw(vec![1]);
+        let mut msg = DhcpV6Message {
+            msg_type: DhcpV6MessageType::Advertise,
+            ..Default::default()
+        };
+        msg.options
+            .insert(DhcpV6Option::ClientId(client_duid.clone()));
+        msg.options
+            .insert(DhcpV6Option::ServerId(DhcpV6Duid::Raw(vec![2])));
+        msg.options.insert(DhcpV6Option::DnsServers(vec![
+            Ipv6Addr::new(0x2001, 0x0db8, 0x000a, 0, 0, 0, 0, 0x53),
+            Ipv6Addr::new(0x2001, 0x0db8, 0x000a, 0, 0, 0, 0, 0x54),
+        ]));
+        msg.options.insert(DhcpV6Option::IANA(DhcpV6OptionIaNa::new(
+            1,
+            60,
+            90,
+            DhcpV6OptionIaAddr::new(
+                Ipv6Addr::new(0x2001, 0x0db8, 0x000a, 0, 0, 0, 0, 0x99),
+                120,
+                240,
+            ),
+        )));
+
+        let lease = DhcpV6Lease::new_from_msg(&msg, &client_duid).unwrap();
+        assert_eq!(
+            lease.dns_srvs,
+            vec![
+                Ipv6Addr::new(0x2001, 0x0db8, 0x000a, 0, 0, 0, 0, 0x53),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x000a, 0, 0, 0, 0, 0x54),
             ]
         );
     }
