@@ -54,6 +54,15 @@ pub struct DhcpV6Config {
     pub iface_name: String,
     pub iface_index: u32,
     pub duid: DhcpV6Duid,
+    /// Identity Association Identifier(IAID).
+    ///
+    /// RFC 8415 section 12 requires the IAID of an IA to be consistent
+    /// across restarts of the DHCP client, otherwise the DHCPv6 server
+    /// will treat the client as a new one and may assign a different
+    /// address. Since this client only uses a single IA, it defaults to
+    /// the well-known value 0. Use [DhcpV6Config::set_iaid()] if a
+    /// different value is required.
+    pub iaid: u32,
     pub mode: DhcpV6Mode,
     pub src_ip: Ipv6Addr,
     // TODO: Inifniband has 128 bits MAC address.
@@ -71,6 +80,7 @@ impl Default for DhcpV6Config {
             iface_name: String::new(),
             iface_index: 0,
             duid: DhcpV6Duid::Raw(Vec::new()),
+            iaid: 0,
             mode: DhcpV6Mode::default(),
             src_ip: Ipv6Addr::UNSPECIFIED,
             src_mac: None,
@@ -147,6 +157,17 @@ impl DhcpV6Config {
     /// Set arbitrary DUID
     pub fn set_duid(&mut self, duid: DhcpV6Duid) -> &mut Self {
         self.duid = duid;
+        self
+    }
+
+    /// Set the Identity Association Identifier(IAID).
+    ///
+    /// RFC 8415 section 12 requires the IAID of an IA to be consistent
+    /// across restarts of the DHCP client, hence it should be a constant
+    /// value derived from the client configuration instead of a random
+    /// one. The default is 0.
+    pub fn set_iaid(&mut self, iaid: u32) -> &mut Self {
+        self.iaid = iaid;
         self
     }
 

@@ -8,7 +8,7 @@ use crate::{
     ErrorContext, ErrorKind,
 };
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Default, PartialEq, Eq, Clone)]
 #[non_exhaustive]
 pub struct DhcpV6OptionIaNa {
     pub iaid: u32,
@@ -16,18 +16,6 @@ pub struct DhcpV6OptionIaNa {
     pub t2_sec: u32,
     pub address: Option<DhcpV6OptionIaAddr>,
     pub status: Option<DhcpV6OptionStatus>,
-}
-
-impl Default for DhcpV6OptionIaNa {
-    fn default() -> Self {
-        Self {
-            iaid: rand::random(),
-            t1_sec: 0,
-            t2_sec: 0,
-            address: None,
-            status: None,
-        }
-    }
 }
 
 impl DhcpV6OptionIaNa {
@@ -130,22 +118,12 @@ impl DhcpV6OptionIaNa {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Default, PartialEq, Eq, Clone)]
 #[non_exhaustive]
 pub struct DhcpV6OptionIaTa {
     pub iaid: u32,
     pub address: Option<DhcpV6OptionIaAddr>,
     pub status: Option<DhcpV6OptionStatus>,
-}
-
-impl Default for DhcpV6OptionIaTa {
-    fn default() -> Self {
-        Self {
-            iaid: rand::random(),
-            address: None,
-            status: None,
-        }
-    }
 }
 
 impl DhcpV6OptionIaTa {
@@ -229,7 +207,7 @@ impl DhcpV6OptionIaTa {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Default, PartialEq, Eq, Clone)]
 #[non_exhaustive]
 pub struct DhcpV6OptionIaPd {
     pub iaid: u32,
@@ -237,18 +215,6 @@ pub struct DhcpV6OptionIaPd {
     pub t2_sec: u32,
     pub prefix: Option<DhcpV6OptionIaPrefix>,
     pub status: Option<DhcpV6OptionStatus>,
-}
-
-impl Default for DhcpV6OptionIaPd {
-    fn default() -> Self {
-        Self {
-            iaid: rand::random(),
-            t1_sec: 0,
-            t2_sec: 0,
-            prefix: None,
-            status: None,
-        }
-    }
 }
 
 impl DhcpV6OptionIaPd {

@@ -8,8 +8,8 @@ use super::{
     DhcpV6Config, DhcpV6State,
 };
 use crate::{
-    DhcpError, DhcpV6Client, DhcpV6Mode, DhcpV6Option, DhcpV6OptionIaPd,
-    ErrorKind,
+    DhcpError, DhcpV6Client, DhcpV6Mode, DhcpV6Option, DhcpV6OptionIaNa,
+    DhcpV6OptionIaPd, DhcpV6OptionIaTa, ErrorKind,
 };
 
 // RFC 8415 section 7.6 Transmission and Retransmission Parameters
@@ -151,17 +151,74 @@ fn new_solicit_msg(
     ));
     match config.mode {
         DhcpV6Mode::NonTemporaryAddresses => {
-            ret.options.insert(DhcpV6Option::IANA(Default::default()))
+            ret.options.insert(DhcpV6Option::IANA(DhcpV6OptionIaNa {
+                iaid: config.iaid,
+                ..Default::default()
+            }))
         }
         DhcpV6Mode::TemporaryAddresses => {
-            ret.options.insert(DhcpV6Option::IATA(Default::default()));
+            ret.options.insert(DhcpV6Option::IATA(DhcpV6OptionIaTa {
+                iaid: config.iaid,
+                ..Default::default()
+            }))
         }
         DhcpV6Mode::PrefixDelegation(prefix_len_hint) => {
-            ret.options.insert(DhcpV6Option::IAPD(
-                DhcpV6OptionIaPd::new_with_hint(prefix_len_hint),
-            ));
+            ret.options.insert(DhcpV6Option::IAPD(DhcpV6OptionIaPd {
+                iaid: config.iaid,
+                ..DhcpV6OptionIaPd::new_with_hint(prefix_len_hint)
+            }));
         }
     }
 
     ret
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use super::*;
+    use crate::DhcpV6OptionCode;
+
+    fn iaid_of(msg: &DhcpV6Message, code: DhcpV6OptionCode) -> u32 {
+        match msg.options.get_first(code) {
+            Some(DhcpV6Option::IANA(v)) => v.iaid,
+            Some(DhcpV6Option::IATA(v)) => v.iaid,
+            Some(DhcpV6Option::IAPD(v)) => v.iaid,
+            _ => panic!("Solicit message has no {code} option"),
+        }
+    }
+
+    #[test]
+    fn solicit_uses_configured_iaid() {
+        for (mode, code) in [
+            (DhcpV6Mode::NonTemporaryAddresses, DhcpV6OptionCode::IANA),
+            (DhcpV6Mode::TemporaryAddresses, DhcpV6OptionCode::IATA),
+            (DhcpV6Mode::PrefixDelegation(56), DhcpV6OptionCode::IAPD),
+        ] {
+            let mut config = DhcpV6Config::new("eth1", mode);
+            config.set_iaid(0x1234_5678);
+            let msg = new_solicit_msg(1, &config, &Instant::now());
+            assert_eq!(iaid_of(&msg, code), 0x1234_5678, "{mode}");
+        }
+    }
+
+    #[test]
+    fn solicit_iaid_is_stable_across_retransmission_and_restart() {
+        // RFC 8415 section 12 requires the IAID of an IA to be consistent
+        // across restarts of the DHCP client, hence the same
+        // configuration must always produce the same IAID.
+        let config =
+            DhcpV6Config::new("eth1", DhcpV6Mode::NonTemporaryAddresses);
+        let first = new_solicit_msg(1, &config, &Instant::now());
+        let retransmit = new_solicit_msg(1, &config, &Instant::now());
+        let restarted = new_solicit_msg(
+            2,
+            &DhcpV6Config::new("eth1", DhcpV6Mode::NonTemporaryAddresses),
+            &Instant::now(),
+        );
+        let first_iaid = iaid_of(&first, DhcpV6OptionCode::IANA);
+        assert_eq!(iaid_of(&retransmit, DhcpV6OptionCode::IANA), first_iaid);
+        assert_eq!(iaid_of(&restarted, DhcpV6OptionCode::IANA), first_iaid);
+    }
 }
