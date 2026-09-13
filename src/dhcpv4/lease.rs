@@ -20,6 +20,20 @@ pub struct DhcpV4Lease {
     pub siaddr: Ipv4Addr,
     /// Your(Client) IP address
     pub yiaddr: Ipv4Addr,
+    /// Server host name from the `sname` field, when that field is not
+    /// overloaded with DHCP options. `None` when the field is unset,
+    /// overloaded, or its bytes are not valid UTF-8.
+    pub sname_str: Option<String>,
+    /// Raw bytes of the `sname` field up to its first NUL. Empty when
+    /// the field is unset or overloaded with DHCP options.
+    pub sname_raw: Vec<u8>,
+    /// Boot file name from the `file` field, when that field is not
+    /// overloaded with DHCP options. `None` when the field is unset,
+    /// overloaded, or its bytes are not valid UTF-8.
+    pub file_str: Option<String>,
+    /// Raw bytes of the `file` field up to its first NUL. Empty when
+    /// the field is unset or overloaded with DHCP options.
+    pub file_raw: Vec<u8>,
     pub t1_sec: u32,
     pub t2_sec: u32,
     pub lease_time_sec: u32,
@@ -45,6 +59,10 @@ impl Default for DhcpV4Lease {
             srv_mac: [u8::MAX; 6],
             siaddr: Ipv4Addr::new(0, 0, 0, 0),
             yiaddr: Ipv4Addr::new(0, 0, 0, 0),
+            sname_str: None,
+            sname_raw: Vec::new(),
+            file_str: None,
+            file_raw: Vec::new(),
             t1_sec: 0,
             t2_sec: 0,
             lease_time_sec: 0,
@@ -75,6 +93,17 @@ impl DhcpV4Lease {
         // socket carrying the ethernet header.
         if msg.srv_mac.len() == ETH_ALEN {
             ret.srv_mac.copy_from_slice(&msg.srv_mac[..ETH_ALEN]);
+        }
+        let overload = msg.option_overload;
+        if overload & 0x01 == 0 {
+            let (s, raw) = decode_bootp_field(&msg.file);
+            ret.file_str = s;
+            ret.file_raw = raw;
+        }
+        if overload & 0x02 == 0 {
+            let (s, raw) = decode_bootp_field(&msg.sname);
+            ret.sname_str = s;
+            ret.sname_raw = raw;
         }
         if let Some(DhcpV4Option::IpAddressLeaseTime(v)) =
             msg.options.get(DhcpV4OptionCode::IpAddressLeaseTime)
@@ -246,6 +275,20 @@ fn add_jitter(val: u32) -> u32 {
     val + rand::random_range(0..5) - 2
 }
 
+/// Decode a BOOTP `sname` or `file` field. The value ends at its first
+/// NUL, so padding after it is not part of the string.
+fn decode_bootp_field(raw: &[u8]) -> (Option<String>, Vec<u8>) {
+    let raw = match raw.iter().position(|b| *b == 0) {
+        Some(pos) => &raw[..pos],
+        None => raw,
+    };
+    if raw.is_empty() {
+        return (None, Vec::new());
+    }
+    let raw = raw.to_vec();
+    (String::from_utf8(raw.clone()).ok(), raw)
+}
+
 fn default_t1_sec(lease_time_sec: u32) -> u32 {
     add_jitter(lease_time_sec / 2)
 }
@@ -259,6 +302,15 @@ mod test {
     use super::*;
     use crate::DhcpV4OptionUnknown;
 
+    fn msg_with_lease_time() -> DhcpV4Message {
+        let mut opts = DhcpV4Options::new();
+        opts.insert(DhcpV4Option::IpAddressLeaseTime(100));
+        DhcpV4Message {
+            options: opts,
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn test_prefix_length() {
         assert_eq!(
@@ -269,6 +321,56 @@ mod test {
             .prefix_length(),
             27
         )
+    }
+
+    #[test]
+    fn test_lease_bootp_name_fields() {
+        let mut msg = msg_with_lease_time();
+        msg.sname[..6].copy_from_slice(b"server");
+        msg.file[..8].copy_from_slice(b"boot.img");
+        let lease = DhcpV4Lease::new_from_msg(&msg).unwrap();
+        assert_eq!(lease.sname_str.as_deref(), Some("server"));
+        assert_eq!(lease.sname_raw.as_slice(), b"server");
+        assert_eq!(lease.file_str.as_deref(), Some("boot.img"));
+        assert_eq!(lease.file_raw.as_slice(), b"boot.img");
+    }
+
+    #[test]
+    fn test_lease_non_utf8_bootp_name_field() {
+        let mut msg = msg_with_lease_time();
+        msg.sname[..3].copy_from_slice(&[0xc0, 0xc0, 0xc0]);
+        let lease = DhcpV4Lease::new_from_msg(&msg).unwrap();
+        assert_eq!(lease.sname_str, None);
+        assert_eq!(lease.sname_raw.as_slice(), &[0xc0, 0xc0, 0xc0]);
+        // An unset peer field yields no string.
+        assert_eq!(lease.file_str, None);
+        assert!(lease.file_raw.is_empty());
+    }
+
+    #[test]
+    fn test_lease_only_overloaded_field_is_empty() {
+        let mut msg = msg_with_lease_time();
+        msg.option_overload = 2;
+        msg.sname[..7].copy_from_slice(&[3, 4, 192, 0, 2, 1, 0xff]);
+        msg.file[..4].copy_from_slice(b"boot");
+        let lease = DhcpV4Lease::new_from_msg(&msg).unwrap();
+        assert_eq!(lease.sname_str, None);
+        assert!(lease.sname_raw.is_empty());
+        assert_eq!(lease.file_str.as_deref(), Some("boot"));
+        assert_eq!(lease.file_raw.as_slice(), b"boot");
+    }
+
+    #[test]
+    fn test_lease_both_overloaded_fields_are_empty() {
+        let mut msg = msg_with_lease_time();
+        msg.option_overload = 3;
+        msg.sname[..8].copy_from_slice(&[3, 4, 192, 0, 2, 1, 0xff, 0]);
+        msg.file[..8].copy_from_slice(&[6, 4, 8, 8, 8, 8, 0xff, 0]);
+        let lease = DhcpV4Lease::new_from_msg(&msg).unwrap();
+        assert_eq!(lease.sname_str, None);
+        assert!(lease.sname_raw.is_empty());
+        assert_eq!(lease.file_str, None);
+        assert!(lease.file_raw.is_empty());
     }
 
     #[test]

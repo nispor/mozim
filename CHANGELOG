@@ -6,8 +6,12 @@
 
 ### New features
  - dhcpv6: support choosing the IAID via `DhcpV6Config::set_iaid()`.
+ - dhcpv4: expose the `sname` and `file` header fields as string and raw
+   bytes in `DhcpV4Lease`.
 
 ### Bug fixes
+ - dhcpv4: support Option Overload (option 52) and concatenate split
+   options per RFC 3396.
  - dhcpv4: fix option parsing desync on malformed option data.
  - dhcpv6: reject delegated prefix length over 128.
  - dhcpv6: fix IAID being re-randomized for every Solicit and client

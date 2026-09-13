@@ -13,6 +13,8 @@ pub enum DhcpV4OptionCode {
     HostName,
     RequestedIpAddress,
     MessageType,
+    /// Option Overload (RFC 2132 section 9.3)
+    OptionOverload,
     ParameterRequestList,
     ClientIdentifier,
     RenewalTime,
@@ -43,6 +45,7 @@ const CODE_BROADCAST_ADDRESS: u8 = 28;
 const CODE_NTP_SERVERS: u8 = 42;
 const CODE_REQUESTED_IP_ADDRESS: u8 = 50;
 const CODE_IP_ADDRESS_LEASE_TIME: u8 = 51;
+const CODE_OPTION_OVERLOAD: u8 = 52;
 const CODE_MESSAGE_TYPE: u8 = 53;
 const CODE_SERVER_IDENTIFIER: u8 = 54;
 const CODE_PARAMETER_REQUEST_LIST: u8 = 55;
@@ -59,6 +62,7 @@ impl From<DhcpV4OptionCode> for u8 {
             DhcpV4OptionCode::Pad => CODE_PAD,
             DhcpV4OptionCode::HostName => CODE_HOST_NAME,
             DhcpV4OptionCode::MessageType => CODE_MESSAGE_TYPE,
+            DhcpV4OptionCode::OptionOverload => CODE_OPTION_OVERLOAD,
             DhcpV4OptionCode::ParameterRequestList => {
                 CODE_PARAMETER_REQUEST_LIST
             }
@@ -91,6 +95,7 @@ impl From<u8> for DhcpV4OptionCode {
             CODE_PAD => Self::Pad,
             CODE_HOST_NAME => Self::HostName,
             CODE_MESSAGE_TYPE => Self::MessageType,
+            CODE_OPTION_OVERLOAD => Self::OptionOverload,
             CODE_PARAMETER_REQUEST_LIST => Self::ParameterRequestList,
             CODE_CLIENT_IDENTIFIER => Self::ClientIdentifier,
             CODE_END => Self::End,
@@ -126,6 +131,7 @@ pub enum DhcpV4Option {
     End,
     HostName(String),
     MessageType(DhcpV4MessageType),
+    OptionOverload(u8),
     ParameterRequestList(Vec<DhcpV4OptionCode>),
     ClientIdentifier(Vec<u8>),
     RequestedIpAddress(Ipv4Addr),
@@ -152,6 +158,7 @@ impl DhcpV4Option {
             Self::End => DhcpV4OptionCode::End,
             Self::HostName(_) => DhcpV4OptionCode::HostName,
             Self::MessageType(_) => DhcpV4OptionCode::MessageType,
+            Self::OptionOverload(_) => DhcpV4OptionCode::OptionOverload,
             Self::ParameterRequestList(_) => {
                 DhcpV4OptionCode::ParameterRequestList
             }
@@ -176,35 +183,13 @@ impl DhcpV4Option {
         }
     }
 
-    pub(crate) fn parse(buf: &mut Buffer) -> Result<Self, DhcpError> {
-        let code: DhcpV4OptionCode =
-            buf.peek_u8().context("No DHCPv4 option code found")?.into();
-        // RFC 2132 section 2: PAD and END options have no length octet.
-        if code == DhcpV4OptionCode::Pad {
-            buf.get_u8()
-                .context("Failed to consume DHCPv4 PAD option")?;
-            return Ok(Self::Pad);
-        }
-        if code == DhcpV4OptionCode::End {
-            buf.get_u8()
-                .context("Failed to consume DHCPv4 END option")?;
-            return Ok(Self::End);
-        }
-        let header = buf.peek_bytes(2).context(format!(
-            "No length for DHCPv4 option {}",
-            u8::from(code)
-        ))?;
-        let len = usize::from(header[1]);
-        // RFC 2132 section 2: the length octet defines the boundary of
-        // the option data. Take the whole option out of `buf` before
-        // parsing its data in a dedicated buffer, otherwise malformed
-        // data, e.g. data shorter or longer than `len`, would
-        // desynchronize parsing of the following options.
-        let opt_raw = buf.get_bytes(len + 2).context(format!(
-            "Invalid DHCPv4 option {} with length {len}",
-            u8::from(code)
-        ))?;
-        let mut opt_buf = Buffer::new(&opt_raw[2..]);
+    /// Parse the already reassembled data of a DHCPv4 option.
+    fn parse_data(
+        code: DhcpV4OptionCode,
+        data: &[u8],
+    ) -> Result<Self, DhcpError> {
+        let len = data.len();
+        let mut opt_buf = Buffer::new(data);
 
         Ok(match code {
             DhcpV4OptionCode::Pad => Self::Pad,
@@ -220,6 +205,30 @@ impl DhcpV4Option {
                     .context("Invalid DHCPv4 option for message type(53)")?
                     .try_into()?,
             ),
+            DhcpV4OptionCode::OptionOverload => {
+                if len != 1 {
+                    return Err(DhcpError::new(
+                        ErrorKind::InvalidDhcpMessage,
+                        format!(
+                            "Invalid DHCPv4 option overload(52) length {len}, \
+                             should be 1"
+                        ),
+                    ));
+                }
+                let value = opt_buf
+                    .get_u8()
+                    .context("Invalid DHCPv4 option for option overload(52)")?;
+                if !(1..=3).contains(&value) {
+                    return Err(DhcpError::new(
+                        ErrorKind::InvalidDhcpMessage,
+                        format!(
+                            "Invalid DHCPv4 option overload(52) value \
+                             {value}, should be 1, 2 or 3"
+                        ),
+                    ));
+                }
+                Self::OptionOverload(value)
+            }
             DhcpV4OptionCode::ParameterRequestList => {
                 let opt_list_raw = opt_buf.get_bytes(len).context(
                     "Invalid DHCPv4 option for parameter request list",
@@ -364,6 +373,10 @@ impl DhcpV4Option {
                 buf.write_u8(1);
                 buf.write_u8(*t as u8);
             }
+            Self::OptionOverload(v) => {
+                buf.write_u8(1);
+                buf.write_u8(*v);
+            }
             Self::ParameterRequestList(opts) => {
                 buf.write_u8(opts.len() as u8);
                 for opt in opts {
@@ -422,45 +435,40 @@ impl PartialOrd for DhcpV4OptionCode {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Default)]
-pub(crate) struct DhcpV4Options {
-    data: HashMap<DhcpV4OptionCode, DhcpV4Option>,
+/// DHCPv4 option data before it is interpreted.
+///
+/// RFC 3396 requires repeated instances of an option to be concatenated
+/// in the order they appear in the `options`, `file` and `sname` fields
+/// before the aggregate value is parsed.
+#[derive(Debug, Default)]
+struct DhcpV4OptionsRaw {
+    data: HashMap<u8, Vec<u8>>,
 }
 
-impl DhcpV4Options {
-    pub(crate) fn new() -> Self {
-        Self {
-            data: HashMap::new(),
-        }
+enum DhcpV4RawOption {
+    Pad,
+    End,
+    Value { code: u8, data: Vec<u8> },
+}
+
+impl DhcpV4OptionsRaw {
+    fn new() -> Self {
+        Self::default()
     }
 
-    pub fn get(&self, code: DhcpV4OptionCode) -> Option<&DhcpV4Option> {
-        self.data.get(&code)
-    }
-
-    pub fn get_data_raw(&self, code: u8) -> Option<Vec<u8>> {
-        let mut buf = BufferMut::new();
-        self.data.get(&code.into()).map(|v| {
-            v.emit(&mut buf);
-            buf.data
-        })
-    }
-
-    pub(crate) fn parse(raw: &[u8]) -> Result<Self, DhcpError> {
-        let mut ret = Self::new();
+    fn parse_field(&mut self, raw: &[u8]) {
         let mut buf = Buffer::new(raw);
-
         while !buf.is_empty() {
             let remain_len = buf.remain_len();
-            match DhcpV4Option::parse(&mut buf) {
-                Ok(opt) => {
-                    if opt == DhcpV4Option::End {
-                        ret.insert(opt);
-                        break;
-                    } else {
-                        ret.insert(opt);
-                    }
+            match Self::parse_option(&mut buf) {
+                Ok(DhcpV4RawOption::Value { code, data }) => {
+                    self.data
+                        .entry(code)
+                        .or_default()
+                        .extend_from_slice(data.as_slice());
                 }
+                Ok(DhcpV4RawOption::Pad) => (),
+                Ok(DhcpV4RawOption::End) => break,
                 Err(e) => {
                     log::info!(
                         "Ignore DHCPv4 option due to parsing error: {e}"
@@ -480,8 +488,128 @@ impl DhcpV4Options {
                 }
             }
         }
+    }
 
-        Ok(ret)
+    fn parse_option(buf: &mut Buffer) -> Result<DhcpV4RawOption, DhcpError> {
+        let code = buf.peek_u8().context("No DHCPv4 option code found")?;
+        // RFC 2132 section 2: PAD and END options have no length octet.
+        if code == CODE_PAD {
+            buf.get_u8()
+                .context("Failed to consume DHCPv4 PAD option")?;
+            return Ok(DhcpV4RawOption::Pad);
+        }
+        if code == CODE_END {
+            buf.get_u8()
+                .context("Failed to consume DHCPv4 END option")?;
+            return Ok(DhcpV4RawOption::End);
+        }
+        let header = buf
+            .peek_bytes(2)
+            .context(format!("No length for DHCPv4 option {code}"))?;
+        let len = usize::from(header[1]);
+        // RFC 2132 section 2: the length octet defines the boundary of
+        // the option data. Take the whole option out of `buf` before
+        // storing its data, otherwise malformed data, e.g. data shorter
+        // or longer than `len`, would desynchronize parsing of the
+        // following options.
+        let opt_raw = buf.get_bytes(len + 2).context(format!(
+            "Invalid DHCPv4 option {code} with length {len}"
+        ))?;
+        Ok(DhcpV4RawOption::Value {
+            code,
+            data: opt_raw[2..].to_vec(),
+        })
+    }
+
+    fn option_overload(&self) -> Option<u8> {
+        self.data.get(&CODE_OPTION_OVERLOAD).and_then(|data| {
+            if data.len() == 1 && (1..=3).contains(&data[0]) {
+                Some(data[0])
+            } else {
+                None
+            }
+        })
+    }
+
+    fn into_options(self) -> DhcpV4Options {
+        let mut ret = DhcpV4Options::new();
+        for (code, data) in self.data {
+            if code == CODE_PAD || code == CODE_END {
+                continue;
+            }
+            match DhcpV4Option::parse_data(code.into(), data.as_slice()) {
+                Ok(opt) => ret.insert(opt),
+                Err(e) => {
+                    log::info!(
+                        "Ignore DHCPv4 option {code} due to parsing error: {e}"
+                    );
+                }
+            }
+        }
+        ret
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Default)]
+pub(crate) struct DhcpV4Options {
+    data: HashMap<DhcpV4OptionCode, DhcpV4Option>,
+}
+
+impl DhcpV4Options {
+    pub(crate) fn new() -> Self {
+        Self {
+            data: HashMap::new(),
+        }
+    }
+
+    pub fn get(&self, code: DhcpV4OptionCode) -> Option<&DhcpV4Option> {
+        self.data.get(&code)
+    }
+
+    pub fn get_data_raw(&self, code: u8) -> Option<Vec<u8>> {
+        let opt = self.data.get(&code.into())?;
+        let mut buf = BufferMut::new();
+        opt.emit(&mut buf);
+        if matches!(opt, DhcpV4Option::Pad | DhcpV4Option::End) {
+            return Some(buf.data);
+        }
+        // RFC 3396: a value longer than 255 octets has to be encoded as
+        // multiple TLV instances so the length octet stays valid.
+        if buf.data.len() > usize::from(u8::MAX) + 2 {
+            let mut ret = BufferMut::new();
+            for chunk in buf.data[2..].chunks(usize::from(u8::MAX)) {
+                ret.write_u8(code);
+                ret.write_u8(chunk.len() as u8);
+                ret.write_bytes(chunk);
+            }
+            Some(ret.data)
+        } else {
+            Some(buf.data)
+        }
+    }
+
+    /// Parse the DHCPv4 `options` field and, when the option overload
+    /// option (RFC 2132 section 9.3) requests it, the `file` and `sname`
+    /// fields.
+    ///
+    /// RFC 2131 section 4.1 requires the fields to be interpreted in
+    /// `options`, `file`, `sname` order. Returns the parsed options and
+    /// the resolved option overload value (0 when absent or invalid).
+    pub(crate) fn parse_with_overload(
+        options_field: &[u8],
+        file_field: &[u8],
+        sname_field: &[u8],
+    ) -> (Self, u8) {
+        let mut raw = DhcpV4OptionsRaw::new();
+        raw.parse_field(options_field);
+        let overload = raw.option_overload().unwrap_or(0);
+        if overload & 0x01 != 0 {
+            raw.parse_field(file_field);
+        }
+        if overload & 0x02 != 0 {
+            raw.parse_field(sname_field);
+        }
+        (raw.into_options(), overload)
     }
 
     pub(crate) fn emit(&self, buff: &mut BufferMut) {
@@ -606,6 +734,10 @@ pub struct DhcpV4OptionUnknown {
 mod test {
     use super::*;
 
+    fn parse_options(raw: &[u8]) -> DhcpV4Options {
+        DhcpV4Options::parse_with_overload(raw, &[], &[]).0
+    }
+
     #[test]
     fn test_parse_classless_route_reject_prefix_over_32() {
         assert!(DhcpV4ClasslessRoutes::parse(&[
@@ -620,10 +752,9 @@ mod test {
         // only 4 of them form an IPv4 address. The trailing 2 bytes
         // should be dropped instead of being parsed as the header of
         // the following option.
-        let opts = DhcpV4Options::parse(&[
+        let opts = parse_options(&[
             6, 6, 8, 8, 8, 8, 1, 1, 12, 4, b'h', b'o', b's', b't',
-        ])
-        .unwrap();
+        ]);
         assert_eq!(
             opts.get(DhcpV4OptionCode::DomainNameServer),
             Some(&DhcpV4Option::DomainNameServer(vec![Ipv4Addr::new(
@@ -637,12 +768,25 @@ mod test {
     }
 
     #[test]
+    fn test_parse_split_option_is_concatenated_before_parsing() {
+        // A DNS server option split into two TLV instances after the
+        // first two octets of the address. The option data has to be
+        // concatenated before it is parsed, otherwise both halves look
+        // like incomplete addresses and are discarded.
+        let opts = parse_options(&[6, 2, 8, 8, 6, 2, 8, 8, 0xff]);
+        assert_eq!(
+            opts.get(DhcpV4OptionCode::DomainNameServer),
+            Some(&DhcpV4Option::DomainNameServer(vec![Ipv4Addr::new(
+                8, 8, 8, 8
+            )]))
+        );
+    }
+
+    #[test]
     fn test_parse_malformed_option_does_not_desync_following_option() {
         // DHCP message type(53) with zero length cannot be parsed, but
         // the following host name(12) option should still be parsed.
-        let opts =
-            DhcpV4Options::parse(&[53, 0, 12, 4, b'h', b'o', b's', b't'])
-                .unwrap();
+        let opts = parse_options(&[53, 0, 12, 4, b'h', b'o', b's', b't']);
         assert!(opts.get(DhcpV4OptionCode::MessageType).is_none());
         assert_eq!(
             opts.get(DhcpV4OptionCode::HostName),
@@ -655,11 +799,10 @@ mod test {
         // Router(3) claims 9 bytes of data, only 2 IPv4 addresses are
         // complete. The trailing single byte should be dropped instead
         // of being parsed as the header of the following option.
-        let opts = DhcpV4Options::parse(&[
+        let opts = parse_options(&[
             3, 9, 192, 0, 2, 1, 192, 0, 2, 2, 0xff, 12, 4, b'h', b'o', b's',
             b't',
-        ])
-        .unwrap();
+        ]);
         assert_eq!(
             opts.get(DhcpV4OptionCode::Router),
             Some(&DhcpV4Option::Router(vec![
@@ -679,7 +822,7 @@ mod test {
         // after 5 bytes. Even if the remaining bytes look like a valid
         // DHCP message type(53) option, they belong to the truncated
         // host name option.
-        let opts = DhcpV4Options::parse(&[12, 10, 53, 1, 5, 99, 99]).unwrap();
+        let opts = parse_options(&[12, 10, 53, 1, 5, 99, 99]);
         assert!(opts.get(DhcpV4OptionCode::HostName).is_none());
         assert!(opts.get(DhcpV4OptionCode::MessageType).is_none());
     }
@@ -718,6 +861,50 @@ mod test {
             opts.get_data_raw(249).unwrap(),
             vec![249, 8, 24, 203, 0, 113, 192, 0, 2, 40]
         );
+    }
+
+    #[test]
+    fn test_get_data_raw_splits_long_option() {
+        let ips: Vec<Ipv4Addr> =
+            (0..64).map(|i| Ipv4Addr::new(10, 0, i, 1)).collect();
+        let mut opts = DhcpV4Options::new();
+        opts.insert(DhcpV4Option::DomainNameServer(ips.clone()));
+        let raw = opts.get_data_raw(6).unwrap();
+        // 64 addresses occupy 256 octets, encoded as a 255-octet chunk
+        // followed by a one-octet chunk.
+        assert_eq!(raw.len(), 2 + 255 + 2 + 1);
+        assert_eq!(raw[0], 6);
+        assert_eq!(raw[1], 255);
+        assert_eq!(raw[257], 6);
+        assert_eq!(raw[258], 1);
+        assert_eq!(
+            parse_options(&raw).get(DhcpV4OptionCode::DomainNameServer),
+            Some(&DhcpV4Option::DomainNameServer(ips))
+        );
+    }
+
+    #[test]
+    fn test_option_overload_round_trip() {
+        for value in 1..=3 {
+            let opt = DhcpV4Option::OptionOverload(value);
+            let mut buf = BufferMut::new();
+            opt.emit(&mut buf);
+            assert_eq!(buf.data, vec![52, 1, value]);
+            let opts = parse_options(&buf.data);
+            assert_eq!(opts.get(DhcpV4OptionCode::OptionOverload), Some(&opt));
+        }
+    }
+
+    #[test]
+    fn test_parse_invalid_option_overload_is_ignored() {
+        for raw in [
+            &[52, 1, 0, 0xff][..],
+            &[52, 1, 4, 0xff][..],
+            &[52, 2, 2, 2, 0xff][..],
+        ] {
+            let opts = parse_options(raw);
+            assert!(opts.get(DhcpV4OptionCode::OptionOverload).is_none());
+        }
     }
 
     #[test]
@@ -762,8 +949,8 @@ mod test {
         ] {
             let mut buf = BufferMut::new();
             opt.emit(&mut buf);
-            let mut read_buf = Buffer::new(buf.data.as_slice());
-            assert_eq!(DhcpV4Option::parse(&mut read_buf).unwrap(), opt);
+            let opts = parse_options(&buf.data);
+            assert_eq!(opts.get(opt.code()), Some(&opt));
         }
     }
 

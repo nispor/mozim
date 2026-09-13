@@ -97,12 +97,16 @@ pub(crate) struct DhcpV4Message {
     pub(crate) giaddr: Ipv4Addr,
     /// Client hardware address.
     pub(crate) chaddr: [u8; MAX_CHADDR_LEN],
-    /// Optional server host name, null terminated string.
-    pub(crate) sname: String,
-    /// Boot file name, null terminated string.
-    pub(crate) file: String,
+    /// Optional server host name (null terminated string) or DHCP
+    /// options when option overload (RFC 2132 section 9.3) is in use.
+    pub(crate) sname: [u8; MAX_SNAME_LEN],
+    /// Boot file name (null terminated string) or DHCP options when
+    /// option overload (RFC 2132 section 9.3) is in use.
+    pub(crate) file: [u8; MAX_FILE_LEN],
     /// DHCP options
     pub(crate) options: DhcpV4Options,
+    /// Resolved option overload (option 52) value, 0 when unused.
+    pub(crate) option_overload: u8,
     // Not defined in RFC, crate private use only
     pub(crate) srv_mac: Vec<u8>,
 }
@@ -127,9 +131,10 @@ impl Default for DhcpV4Message {
             siaddr: Ipv4Addr::UNSPECIFIED,
             giaddr: Ipv4Addr::UNSPECIFIED,
             chaddr: [0u8; MAX_CHADDR_LEN],
-            sname: String::new(),
-            file: String::new(),
+            sname: [0u8; MAX_SNAME_LEN],
+            file: [0u8; MAX_FILE_LEN],
             options: DhcpV4Options::default(),
+            option_overload: 0,
             srv_mac: Vec::new(),
         }
     }
@@ -196,14 +201,19 @@ impl DhcpV4Message {
                 );
                 chaddr
             },
-            sname: buf
-                .get_string_with_null(MAX_SNAME_LEN)
-                .context("Invalid DHCPv4 header option 'sname' ")?,
-            file: buf
-                .get_string_with_null(MAX_FILE_LEN)
-                .context("Invalid DHCPv4 header option 'file'")?,
+            sname: [0u8; MAX_SNAME_LEN],
+            file: [0u8; MAX_FILE_LEN],
             options: DhcpV4Options::new(),
+            option_overload: 0,
         };
+        ret.sname.copy_from_slice(
+            buf.get_bytes(MAX_SNAME_LEN)
+                .context("Invalid DHCPv4 header option 'sname'")?,
+        );
+        ret.file.copy_from_slice(
+            buf.get_bytes(MAX_FILE_LEN)
+                .context("Invalid DHCPv4 header option 'file'")?,
+        );
 
         let magic_cookie =
             buf.get_bytes(4).context("Invalid DHCP magic cookie")?;
@@ -216,7 +226,13 @@ impl DhcpV4Message {
                 ),
             ));
         }
-        ret.options = DhcpV4Options::parse(buf.get_remains())?;
+        let (options, option_overload) = DhcpV4Options::parse_with_overload(
+            buf.get_remains(),
+            &ret.file,
+            &ret.sname,
+        );
+        ret.options = options;
+        ret.option_overload = option_overload;
 
         log::trace!("Parsed DHCP message {ret:?}");
         Ok(ret)
@@ -271,8 +287,8 @@ impl DhcpV4Message {
         buf.write_ipv4(self.siaddr);
         buf.write_ipv4(self.giaddr);
         buf.write_bytes(&self.chaddr);
-        buf.write_string_with_null(&self.sname, MAX_SNAME_LEN);
-        buf.write_string_with_null(&self.file, MAX_FILE_LEN);
+        buf.write_bytes(&self.sname);
+        buf.write_bytes(&self.file);
         buf.write_bytes(&DHCPV4_MAGIC_COOKIE);
         self.options.emit(buf);
     }
@@ -476,6 +492,100 @@ fn gen_eth_packet(
 #[cfg(test)]
 mod test {
     use super::*;
+
+    fn raw_dhcp_msg(
+        options: &[u8],
+        file: &[u8; MAX_FILE_LEN],
+        sname: &[u8; MAX_SNAME_LEN],
+    ) -> Vec<u8> {
+        let mut raw = vec![0u8; 236];
+        raw[0] = BOOTREQUEST;
+        raw[1] = ARP_HW_TYPE_ETHERNET;
+        raw[2] = HW_ADDR_LEN_ETHERNET;
+        raw[4..8].copy_from_slice(&0x1234_5678u32.to_be_bytes());
+        raw[44..108].copy_from_slice(sname);
+        raw[108..236].copy_from_slice(file);
+        raw.extend_from_slice(&DHCPV4_MAGIC_COOKIE);
+        raw.extend_from_slice(options);
+        raw
+    }
+
+    #[test]
+    fn test_parse_sname_option_overload() {
+        let file = [0u8; MAX_FILE_LEN];
+        let mut sname = [0u8; MAX_SNAME_LEN];
+        // Router 192.0.2.1 stored in the overloaded sname field. The
+        // 0xc0 octet is invalid UTF-8, so decoding this as a string must
+        // not be attempted.
+        sname[..7].copy_from_slice(&[3, 4, 192, 0, 2, 1, 0xff]);
+        let raw = raw_dhcp_msg(&[53, 1, 5, 52, 1, 2, 0xff], &file, &sname);
+
+        let msg = DhcpV4Message::parse(&raw).unwrap();
+
+        assert_eq!(msg.option_overload, 2);
+        assert_eq!(
+            msg.options.get(DhcpV4OptionCode::Router),
+            Some(&DhcpV4Option::Router(vec![Ipv4Addr::new(192, 0, 2, 1)]))
+        );
+    }
+
+    #[test]
+    fn test_parse_file_option_overload_with_binary_sname() {
+        let mut file = [0u8; MAX_FILE_LEN];
+        let mut sname = [0u8; MAX_SNAME_LEN];
+        // Router 192.0.2.2 stored in the overloaded file field.
+        file[..7].copy_from_slice(&[3, 4, 192, 0, 2, 2, 0xff]);
+        // sname is not overloaded and is not valid UTF-8. It must not
+        // make the whole message unparsable.
+        sname[..3].copy_from_slice(&[0xc0, 0xc0, 0xc0]);
+        let raw = raw_dhcp_msg(&[53, 1, 5, 52, 1, 1, 0xff], &file, &sname);
+
+        let msg = DhcpV4Message::parse(&raw).unwrap();
+
+        assert_eq!(msg.option_overload, 1);
+        assert_eq!(
+            msg.options.get(DhcpV4OptionCode::Router),
+            Some(&DhcpV4Option::Router(vec![Ipv4Addr::new(192, 0, 2, 2)]))
+        );
+    }
+
+    #[test]
+    fn test_parse_non_utf8_sname_without_overload() {
+        let file = [0u8; MAX_FILE_LEN];
+        let mut sname = [0xc0u8; MAX_SNAME_LEN];
+        sname[MAX_SNAME_LEN - 1] = 0;
+        let raw = raw_dhcp_msg(&[53, 1, 2, 0xff], &file, &sname);
+
+        assert!(DhcpV4Message::parse(&raw).is_ok());
+    }
+
+    #[test]
+    fn test_parse_option_overload_concatenates_in_field_order() {
+        let mut file = [0u8; MAX_FILE_LEN];
+        let mut sname = [0u8; MAX_SNAME_LEN];
+        // DNS server 8.8.8.8 in file, 1.1.1.1 in sname, plus another
+        // instance in the options field. RFC 3396 requires them to be
+        // concatenated in options, file, sname order.
+        file[..8].copy_from_slice(&[6, 4, 8, 8, 8, 8, 0xff, 0]);
+        sname[..8].copy_from_slice(&[6, 4, 1, 1, 1, 1, 0xff, 0]);
+        let raw = raw_dhcp_msg(
+            &[6, 4, 8, 8, 4, 4, 53, 1, 5, 52, 1, 3, 0xff],
+            &file,
+            &sname,
+        );
+
+        let msg = DhcpV4Message::parse(&raw).unwrap();
+
+        assert_eq!(msg.option_overload, 3);
+        assert_eq!(
+            msg.options.get(DhcpV4OptionCode::DomainNameServer),
+            Some(&DhcpV4Option::DomainNameServer(vec![
+                Ipv4Addr::new(8, 8, 4, 4),
+                Ipv4Addr::new(8, 8, 8, 8),
+                Ipv4Addr::new(1, 1, 1, 1),
+            ]))
+        );
+    }
 
     #[test]
     fn test_release_msg() {

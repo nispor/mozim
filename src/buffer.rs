@@ -319,30 +319,4 @@ impl BufferMut {
     pub(crate) fn write_string_without_null(&mut self, value: &str) {
         self.data.extend_from_slice(value.as_bytes());
     }
-
-    /// `max_size` include the trailing null. The truncate does not check
-    /// UTF-8 boundary for now.
-    pub(crate) fn write_string_with_null(
-        &mut self,
-        value: &str,
-        fix_size: usize,
-    ) {
-        // TODO(Gris Ge): This function does not responsible for truncating in
-        // the middle of single UTF-8 character. The Rust 1.91 has
-        // `str::floor_char_boundary()` which could helps. Let's wait a while
-        // for that rust version became popular.
-        let value_bytes = if (value.len() + 1) > fix_size {
-            &value.as_bytes()[..fix_size - 1]
-        } else {
-            value.as_bytes()
-        };
-
-        let remains = fix_size - value_bytes.len() - 1;
-
-        self.data.extend_from_slice(value_bytes);
-        if remains > 0 {
-            self.data.extend_from_slice(vec![0u8; remains].as_slice());
-        }
-        self.write_u8(0);
-    }
 }
