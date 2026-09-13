@@ -8,6 +8,7 @@
  - N/A
 
 ### Bug fixes
+ - dhcpv4: fix option parsing desync on malformed option data.
  - dhcpv6: reject delegated prefix length over 128.
 
 ## [0.3.3] - 2026-08-30

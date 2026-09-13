@@ -178,34 +178,50 @@ impl DhcpV4Option {
 
     pub(crate) fn parse(buf: &mut Buffer) -> Result<Self, DhcpError> {
         let code: DhcpV4OptionCode =
-            buf.get_u8().context("No DHCPv4 option code found")?.into();
-        let len: usize = if code == DhcpV4OptionCode::Pad {
-            return Ok(Self::Pad);
-        } else if code == DhcpV4OptionCode::End {
-            return Ok(Self::End);
-        } else {
+            buf.peek_u8().context("No DHCPv4 option code found")?.into();
+        // RFC 2132 section 2: PAD and END options have no length octet.
+        if code == DhcpV4OptionCode::Pad {
             buf.get_u8()
-                .context(format!(
-                    "No length for DHCPv4 option {}",
-                    u8::from(code)
-                ))?
-                .into()
-        };
+                .context("Failed to consume DHCPv4 PAD option")?;
+            return Ok(Self::Pad);
+        }
+        if code == DhcpV4OptionCode::End {
+            buf.get_u8()
+                .context("Failed to consume DHCPv4 END option")?;
+            return Ok(Self::End);
+        }
+        let header = buf.peek_bytes(2).context(format!(
+            "No length for DHCPv4 option {}",
+            u8::from(code)
+        ))?;
+        let len = usize::from(header[1]);
+        // RFC 2132 section 2: the length octet defines the boundary of
+        // the option data. Take the whole option out of `buf` before
+        // parsing its data in a dedicated buffer, otherwise malformed
+        // data, e.g. data shorter or longer than `len`, would
+        // desynchronize parsing of the following options.
+        let opt_raw = buf.get_bytes(len + 2).context(format!(
+            "Invalid DHCPv4 option {} with length {len}",
+            u8::from(code)
+        ))?;
+        let mut opt_buf = Buffer::new(&opt_raw[2..]);
 
         Ok(match code {
             DhcpV4OptionCode::Pad => Self::Pad,
             DhcpV4OptionCode::End => Self::End,
             DhcpV4OptionCode::HostName => Self::HostName(
-                buf.get_string_with_null(len)
+                opt_buf
+                    .get_string_with_null(len)
                     .context("Invalid DHCPv4 option for host name(12)")?,
             ),
             DhcpV4OptionCode::MessageType => Self::MessageType(
-                buf.get_u8()
+                opt_buf
+                    .get_u8()
                     .context("Invalid DHCPv4 option for message type(53)")?
                     .try_into()?,
             ),
             DhcpV4OptionCode::ParameterRequestList => {
-                let opt_list_raw = buf.get_bytes(len).context(
+                let opt_list_raw = opt_buf.get_bytes(len).context(
                     "Invalid DHCPv4 option for parameter request list",
                 )?;
 
@@ -217,51 +233,55 @@ impl DhcpV4Option {
                 Self::ParameterRequestList(opt_list)
             }
             DhcpV4OptionCode::ClientIdentifier => Self::ClientIdentifier(
-                buf.get_bytes(len)
+                opt_buf
+                    .get_bytes(len)
                     .context("Invalid DHCPv4 option for client identifier(61)")?
                     .to_vec(),
             ),
             DhcpV4OptionCode::RequestedIpAddress => {
-                Self::RequestedIpAddress(buf.get_ipv4().context(
+                Self::RequestedIpAddress(opt_buf.get_ipv4().context(
                     "Invalid DHCPv4 option for requested IP address(50)",
                 )?)
             }
             DhcpV4OptionCode::ServerIdentifier => {
-                Self::ServerIdentifier(buf.get_ipv4().context(
+                Self::ServerIdentifier(opt_buf.get_ipv4().context(
                     "Invalid DHCPv4 option for server identifier(54)",
                 )?)
             }
             DhcpV4OptionCode::RenewalTime => {
-                Self::RenewalTime(buf.get_u32_be().context(
+                Self::RenewalTime(opt_buf.get_u32_be().context(
                     "Invalid DHCPv4 option for renewal(T1) time(58)",
                 )?)
             }
             DhcpV4OptionCode::RebindingTime => Self::RebindingTime(
-                buf.get_u32_be()
+                opt_buf
+                    .get_u32_be()
                     .context("Invalid DHCPv4 option for rebind(T2) time(59)")?,
             ),
             DhcpV4OptionCode::InterfaceMtu => Self::InterfaceMtu(
-                buf.get_u16_be()
+                opt_buf
+                    .get_u16_be()
                     .context("Invalid DHCPv4 option for interface MTU(26)")?,
             ),
             DhcpV4OptionCode::IpAddressLeaseTime => {
-                Self::IpAddressLeaseTime(buf.get_u32_be().context(
+                Self::IpAddressLeaseTime(opt_buf.get_u32_be().context(
                     "Invalid DHCPv4 option for IP address lease time(51)",
                 )?)
             }
             DhcpV4OptionCode::SubnetMask => Self::SubnetMask(
-                buf.get_ipv4()
+                opt_buf
+                    .get_ipv4()
                     .context("Invalid DHCPv4 option for subnet mask(1)")?,
             ),
             DhcpV4OptionCode::BroadcastAddress => {
-                Self::BroadcastAddress(buf.get_ipv4().context(
+                Self::BroadcastAddress(opt_buf.get_ipv4().context(
                     "Invalid DHCPv4 option for broadcast address(28)",
                 )?)
             }
             DhcpV4OptionCode::DomainNameServer => Self::DomainNameServer({
                 let mut ret = Vec::new();
                 for _ in 0..(len / 4_usize) {
-                    ret.push(buf.get_ipv4().context(
+                    ret.push(opt_buf.get_ipv4().context(
                         "Invalid DHCPv4 option for domain name server(6)",
                     )?);
                 }
@@ -271,7 +291,8 @@ impl DhcpV4Option {
                 let mut ret = Vec::new();
                 for _ in 0..(len / 4_usize) {
                     ret.push(
-                        buf.get_ipv4()
+                        opt_buf
+                            .get_ipv4()
                             .context("Invalid DHCPv4 option for router(3)")?,
                     );
                 }
@@ -280,18 +301,19 @@ impl DhcpV4Option {
             DhcpV4OptionCode::NtpServers => Self::NtpServers({
                 let mut ret = Vec::new();
                 for _ in 0..(len / 4_usize) {
-                    ret.push(buf.get_ipv4().context(
+                    ret.push(opt_buf.get_ipv4().context(
                         "Invalid DHCPv4 option for NTP servers(42)",
                     )?);
                 }
                 ret
             }),
             DhcpV4OptionCode::DomainName => Self::DomainName(
-                buf.get_string_with_null(len)
+                opt_buf
+                    .get_string_with_null(len)
                     .context("Invalid DHCPv4 option for domain name(15)")?,
             ),
             DhcpV4OptionCode::ClasslessStaticRoute => {
-                let raw = buf.get_bytes(len).context(
+                let raw = opt_buf.get_bytes(len).context(
                     "Invalid DHCPv4 option for classless static routes (121)",
                 )?;
                 Self::ClasslessStaticRoute({
@@ -299,11 +321,12 @@ impl DhcpV4Option {
                 })
             }
             DhcpV4OptionCode::Message => Self::Message(
-                buf.get_string_with_null(len)
+                opt_buf
+                    .get_string_with_null(len)
                     .context("Invalid DHCPv4 option for message(56)")?,
             ),
             DhcpV4OptionCode::Other(d) => {
-                let data = buf
+                let data = opt_buf
                     .get_bytes(len)
                     .context(format!("Invalid DHCPv4 option {d}"))?
                     .to_vec();
@@ -428,6 +451,7 @@ impl DhcpV4Options {
         let mut buf = Buffer::new(raw);
 
         while !buf.is_empty() {
+            let remain_len = buf.remain_len();
             match DhcpV4Option::parse(&mut buf) {
                 Ok(opt) => {
                     if opt == DhcpV4Option::End {
@@ -441,7 +465,18 @@ impl DhcpV4Options {
                     log::info!(
                         "Ignore DHCPv4 option due to parsing error: {e}"
                     );
-                    continue;
+                    // The parse only aborts without consuming any byte
+                    // when the remaining data is a truncated option.
+                    // Stop instead of parsing its data as option
+                    // headers.
+                    if buf.remain_len() == remain_len {
+                        log::info!(
+                            "Stop parsing DHCPv4 options due to malformed \
+                             data: {:?}",
+                            buf.get_remains()
+                        );
+                        break;
+                    }
                 }
             }
         }
@@ -577,6 +612,76 @@ mod test {
             33, 203, 0, 113, 192, 0, 2, 40
         ])
         .is_err());
+    }
+
+    #[test]
+    fn test_parse_dns_server_option_length_is_boundary() {
+        // DHCPv4 option 6(domain name server) claims 6 bytes of data but
+        // only 4 of them form an IPv4 address. The trailing 2 bytes
+        // should be dropped instead of being parsed as the header of
+        // the following option.
+        let opts = DhcpV4Options::parse(&[
+            6, 6, 8, 8, 8, 8, 1, 1, 12, 4, b'h', b'o', b's', b't',
+        ])
+        .unwrap();
+        assert_eq!(
+            opts.get(DhcpV4OptionCode::DomainNameServer),
+            Some(&DhcpV4Option::DomainNameServer(vec![Ipv4Addr::new(
+                8, 8, 8, 8
+            )]))
+        );
+        assert_eq!(
+            opts.get(DhcpV4OptionCode::HostName),
+            Some(&DhcpV4Option::HostName("host".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_malformed_option_does_not_desync_following_option() {
+        // DHCP message type(53) with zero length cannot be parsed, but
+        // the following host name(12) option should still be parsed.
+        let opts =
+            DhcpV4Options::parse(&[53, 0, 12, 4, b'h', b'o', b's', b't'])
+                .unwrap();
+        assert!(opts.get(DhcpV4OptionCode::MessageType).is_none());
+        assert_eq!(
+            opts.get(DhcpV4OptionCode::HostName),
+            Some(&DhcpV4Option::HostName("host".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_router_option_length_is_boundary() {
+        // Router(3) claims 9 bytes of data, only 2 IPv4 addresses are
+        // complete. The trailing single byte should be dropped instead
+        // of being parsed as the header of the following option.
+        let opts = DhcpV4Options::parse(&[
+            3, 9, 192, 0, 2, 1, 192, 0, 2, 2, 0xff, 12, 4, b'h', b'o', b's',
+            b't',
+        ])
+        .unwrap();
+        assert_eq!(
+            opts.get(DhcpV4OptionCode::Router),
+            Some(&DhcpV4Option::Router(vec![
+                Ipv4Addr::new(192, 0, 2, 1),
+                Ipv4Addr::new(192, 0, 2, 2),
+            ]))
+        );
+        assert_eq!(
+            opts.get(DhcpV4OptionCode::HostName),
+            Some(&DhcpV4Option::HostName("host".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_truncated_option_data_is_not_reinterpreted() {
+        // Host name(12) declares 10 bytes of data but the buffer ends
+        // after 5 bytes. Even if the remaining bytes look like a valid
+        // DHCP message type(53) option, they belong to the truncated
+        // host name option.
+        let opts = DhcpV4Options::parse(&[12, 10, 53, 1, 5, 99, 99]).unwrap();
+        assert!(opts.get(DhcpV4OptionCode::HostName).is_none());
+        assert!(opts.get(DhcpV4OptionCode::MessageType).is_none());
     }
 
     #[test]

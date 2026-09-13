@@ -40,6 +40,16 @@ impl<'a> Buffer<'a> {
         self.index = pos;
     }
 
+    pub(crate) fn peek_u8(&self) -> Result<u8, DhcpError> {
+        if self.is_empty() {
+            return Err(DhcpError::new(
+                ErrorKind::InvalidDhcpMessage,
+                "Remain buffer not enough for getting u8".to_string(),
+            ));
+        }
+        Ok(self.data[self.index])
+    }
+
     pub(crate) fn peek_u16_be(&self) -> Result<u16, DhcpError> {
         if self.remain_len() < 2 {
             return Err(DhcpError::new(

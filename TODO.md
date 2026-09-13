@@ -1,3 +1,10 @@
+- DHCPv4 address-list options with malformed length yield a partial
+  or empty list instead of being rejected. `DomainNameServer`(6),
+  `Router`(3) and `NtpServers`(42) parse `len / 4` addresses and
+  silently drop any trailing partial address, so a length below 4
+  yields `Some(vec![])`, which a caller may apply as "no DNS
+  server". `DhcpV4Option::parse()` (`src/dhcpv4/option.rs`) should
+  reject such options per RFC 2132 section 3.8.
 - DHCPv4 client never recognizes DHCPNAK. `recv_dhcp_lease()`
   (`src/dhcpv4/socket.rs`) only compares the reply against one
   `expected` message type, so a NACK during Request/Renew/Rebind
