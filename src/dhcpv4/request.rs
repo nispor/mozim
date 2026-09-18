@@ -41,6 +41,9 @@ impl DhcpV4Client {
     }
 
     async fn _request(&mut self) -> Result<(), DhcpError> {
+        // RFC 2131 section 3.1: reuse the exact `secs` value from the
+        // DHCPDISCOVER which triggered the selected DHCPOFFER.
+        let secs = self.gen_request_secs();
         let lease = match self.pending_lease.as_ref() {
             Some(l) => l,
             None => {
@@ -53,7 +56,7 @@ impl DhcpV4Client {
             }
         };
         let dhcp_msg =
-            DhcpV4Message::new_request(self.xid, &self.config, lease);
+            DhcpV4Message::new_request(self.xid, &self.config, lease, secs);
         let xid = self.xid;
         let raw_socket = self.get_raw_socket_or_init().await?;
 

@@ -7,6 +7,11 @@ use crate::{DhcpError, DhcpV4Client};
 
 impl DhcpV4Client {
     pub(crate) async fn discovery(&mut self) -> Result<(), DhcpError> {
+        // RFC 2131 section 2: `secs` is the number of seconds elapsed
+        // since the client began address acquisition. Start a new counter
+        // for every new acquisition process.
+        self.start_trans_timer();
+        self.discovery_secs = None;
         // RFC 2131 4.4.1 Initialization and allocation of network address
         // ```
         // The client begins in INIT state and forms a DHCPDISCOVER message.
@@ -68,7 +73,13 @@ impl DhcpV4Client {
     async fn _discovery(&mut self) -> Result<(), DhcpError> {
         self.state = DhcpV4State::InitReboot;
         self.lease = None;
-        let dhcp_msg = DhcpV4Message::new_discovery(self.xid, &self.config);
+        let secs = self.trans_elapsed_secs();
+        // RFC 2131 section 3.1: the DHCPREQUEST must use the same
+        // `secs` value as the DHCPDISCOVER whose DHCPOFFER the client
+        // accepts.
+        self.discovery_secs = Some(secs);
+        let dhcp_msg =
+            DhcpV4Message::new_discovery(self.xid, &self.config, secs);
         let xid = self.xid;
         let raw_socket = self.get_raw_socket_or_init().await?;
 

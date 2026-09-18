@@ -5,15 +5,97 @@ use std::net::Ipv4Addr;
 use tokio::time::{timeout, Duration};
 
 use super::env::{
-    init_log, set_client_ip, with_dhcp_env, with_udhcpd_env, FOO1_HOSTNAME,
+    init_log, set_client_ip, start_dhcp_server, with_dhcp_env,
+    with_dhcp_env_no_server, with_udhcpd_env, DhcpV4Sniffer, FOO1_HOSTNAME,
     FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID, TEST_CLS_DST, TEST_CLS_DST_LEN,
     TEST_CLS_RT_ADDR, TEST_DHCP_SRV_ADDR, TEST_NIC_CLI,
 };
 use crate::{
-    DhcpV4ClasslessRoute, DhcpV4Client, DhcpV4Config, DhcpV4Lease, DhcpV4State,
+    DhcpV4ClasslessRoute, DhcpV4Client, DhcpV4Config, DhcpV4Lease,
+    DhcpV4MessageType, DhcpV4State,
 };
 
 const FOO2_HOSTNAME: &str = "foo2";
+
+/// RFC 2131 section 3.1:
+///     To help ensure that any BOOTP relay agents forward the DHCPREQUEST
+///     message to the same set of DHCP servers that received the original
+///     DHCPDISCOVER message, the DHCPREQUEST message MUST use the same
+///     value in the DHCP message header's 'secs' field and be sent to the
+///     same IP broadcast address as the original DHCPDISCOVER message.
+#[test]
+fn test_dhcpv4_secs_field() {
+    init_log();
+    with_dhcp_env_no_server(|| {
+        // Sniff before the client starts, so the first DHCPDISCOVER which
+        // is sent before any DHCP server is available gets captured.
+        let mut sniffer = DhcpV4Sniffer::new(TEST_NIC_CLI);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .enable_io()
+                .build()
+                .unwrap();
+            let lease = rt.block_on(async {
+                let config = DhcpV4Config::new(TEST_NIC_CLI);
+                let mut cli = DhcpV4Client::init(config, None).await.unwrap();
+                loop {
+                    if let DhcpV4State::Done(lease) = cli.run().await.unwrap() {
+                        break *lease;
+                    }
+                }
+            });
+            let _ = tx.send(lease);
+        });
+
+        // The first DHCPDISCOVER message of the address acquisition
+        // process carries 0 seconds.
+        let msg = sniffer
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first DHCPDISCOVER");
+        assert_eq!(msg.message_type(), Some(DhcpV4MessageType::Discovery));
+        assert_eq!(msg.secs, 0);
+
+        // Let dnsmasq answer a retransmitted DHCPDISCOVER, which carries
+        // the seconds elapsed since the acquisition process started.
+        start_dhcp_server();
+
+        let mut discover_secs = None;
+        loop {
+            let msg = sniffer
+                .recv_timeout(Duration::from_secs(20))
+                .expect("DHCP message from client");
+            match msg.message_type() {
+                Some(DhcpV4MessageType::Discovery) => {
+                    assert!(
+                        msg.secs >= 3,
+                        "retransmitted DHCPDISCOVER should count the seconds \
+                         since the process started, got {}",
+                        msg.secs
+                    );
+                    discover_secs = Some(msg.secs);
+                }
+                Some(DhcpV4MessageType::Request) => {
+                    assert_eq!(
+                        discover_secs,
+                        Some(msg.secs),
+                        "DHCPREQUEST must reuse the 'secs' value of the \
+                         DHCPDISCOVER which triggered the DHCPOFFER"
+                    );
+                    break;
+                }
+                _ => (),
+            }
+        }
+
+        let lease = rx
+            .recv_timeout(Duration::from_secs(20))
+            .expect("client result");
+        assert!(!lease.yiaddr.is_unspecified());
+    })
+}
 
 #[test]
 fn test_dhcpv4() {

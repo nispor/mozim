@@ -114,7 +114,7 @@ impl DhcpV6Message {
             options: DhcpV6Options::new(),
         };
         ret.xid.copy_from_slice(&xid.to_be_bytes()[1..]);
-        // RFC 8415 21.7: elapsed-time counts hundredths of a second
+        // RFC 8415 21.9: elapsed-time counts hundredths of a second
         // and values above 0xffff must be capped, not truncated.
         ret.options.insert(DhcpV6Option::ElapsedTime(
             u16::try_from(trans_begin_time.elapsed().as_millis() / 10)
