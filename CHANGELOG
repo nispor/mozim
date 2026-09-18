@@ -8,6 +8,10 @@
  - dhcpv6: support choosing the IAID via `DhcpV6Config::set_iaid()`.
  - dhcpv4: expose the `sname` and `file` header fields as string and raw
    bytes in `DhcpV4Lease`.
+ - dhcpv4: fill the `secs` header field with the seconds elapsed since the
+   address acquisition or renewal process started, and make the
+   DHCPREQUEST reuse the value of the DHCPDISCOVER that triggered the
+   DHCPOFFER (RFC 2131 section 3.1).
 
 ### Bug fixes
  - dhcpv4: support Option Overload (option 52) and concatenate split

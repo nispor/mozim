@@ -1,12 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
+    collections::VecDeque,
+    ffi::CString,
     io::Read,
     net::{Ipv4Addr, Ipv6Addr},
+    os::fd::{AsRawFd, OwnedFd},
     process::Command,
     str::FromStr,
+    time::{Duration, Instant},
 };
 
+use nix::{
+    errno::Errno,
+    sys::socket::{
+        recv, socket, AddressFamily, MsgFlags, SockFlag, SockProtocol, SockType,
+    },
+};
+
+use crate::dhcpv4::DhcpV4Message;
 #[cfg(not(feature = "netlink"))]
 use crate::ETH_ALEN;
 
@@ -18,7 +30,7 @@ const PID_FILE_PATH: &str = "/tmp/mozim_test_dnsmasq_pid";
 const TEST_DHCPD_NETNS: &str = "mozim_test";
 const LOG_FILE: &str = "/tmp/mozim_test_dnsmasq_log";
 pub(crate) const TEST_NIC_CLI: &str = "dhcpcli";
-const TEST_NIC_CLI_MAC: &str = "00:23:45:67:89:1a";
+pub(crate) const TEST_NIC_CLI_MAC: &str = "00:23:45:67:89:1a";
 #[cfg(not(feature = "netlink"))]
 pub(crate) const TEST_NIC_CLI_MAC_RAW: [u8; ETH_ALEN] =
     [0x00, 0x23, 0x45, 0x67, 0x89, 0x1a];
@@ -80,7 +92,7 @@ fn remove_test_veth_nics() {
     run_cmd_ignore_failure(&format!("ip link del {TEST_NIC_CLI}"));
 }
 
-fn start_dhcp_server() {
+pub(crate) fn start_dhcp_server() {
     run_cmd(&format!("rm {LOG_FILE}"));
     run_cmd(&format!("touch {LOG_FILE}"));
     run_cmd(&format!("chmod 666 {LOG_FILE}"));
@@ -135,7 +147,7 @@ fn start_dhcp_server() {
     std::thread::sleep(std::time::Duration::from_secs(1));
 }
 
-fn stop_dhcp_server() {
+pub(crate) fn stop_dhcp_server() {
     if !std::path::Path::new(PID_FILE_PATH).exists() {
         return;
     }
@@ -149,6 +161,17 @@ fn stop_dhcp_server() {
         .unwrap_or_else(|_| panic!("Invalid PID content {contents}"));
 
     run_cmd_ignore_failure(&format!("kill {pid}"));
+
+    // Wait for dnsmasq to actually exit: tests which start their own DHCP
+    // server or observe DHCPDISCOVER retransmissions race with a lingering
+    // dnsmasq.
+    for _ in 0..100 {
+        let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        if rc == -1 && Errno::last() == Errno::ESRCH {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 #[cfg(feature = "netlink")]
@@ -305,6 +328,26 @@ where
     assert!(result.is_ok())
 }
 
+/// Same as [with_dhcp_env()] except that the DHCP server is not started, so
+/// tests can control when the server becomes available.
+pub(crate) fn with_dhcp_env_no_server<T>(test: T)
+where
+    T: FnOnce() + std::panic::UnwindSafe,
+{
+    create_test_net_namespace();
+    create_test_veth_nics();
+    stop_dhcp_server();
+
+    let result = std::panic::catch_unwind(|| {
+        test();
+    });
+
+    stop_dhcp_server();
+    remove_test_veth_nics();
+    remove_test_net_namespace();
+    assert!(result.is_ok())
+}
+
 #[cfg(feature = "netlink")]
 pub(crate) fn with_udhcpd_env<T>(test: T)
 where
@@ -329,4 +372,109 @@ pub(crate) fn init_log() {
     let mut log_builder = env_logger::Builder::new();
     log_builder.filter(Some("mozim"), log::LevelFilter::Trace);
     log_builder.try_init().ok();
+}
+
+/// Captures DHCPv4 messages sent and received on a network interface.
+///
+/// The `DhcpV4Client` raw socket only receives DHCP replies (UDP
+/// destination port 68), so tests which need to check the DHCPDISCOVER and
+/// DHCPREQUEST messages sent by the client require their own AF_PACKET
+/// socket, which also sees outgoing frames.
+pub(crate) struct DhcpV4Sniffer {
+    fd: OwnedFd,
+    pending: VecDeque<DhcpV4Message>,
+}
+
+impl DhcpV4Sniffer {
+    pub(crate) fn new(iface_name: &str) -> Self {
+        let fd = socket(
+            AddressFamily::Packet,
+            SockType::Raw,
+            SockFlag::SOCK_NONBLOCK,
+            Some(SockProtocol::EthAll),
+        )
+        .expect("Failed to create raw packet socket for DHCP sniffer");
+
+        let iface_index = unsafe {
+            let iface_name = CString::new(iface_name).unwrap();
+            libc::if_nametoindex(iface_name.as_ptr())
+        };
+        assert_ne!(iface_index, 0, "Failed to get {iface_name} index");
+
+        let mut socket_addr = libc::sockaddr_ll {
+            sll_family: libc::AF_PACKET as libc::c_ushort,
+            sll_protocol: (libc::ETH_P_ALL as libc::c_ushort).to_be(),
+            sll_ifindex: iface_index as libc::c_int,
+            sll_hatype: 0,
+            sll_pkttype: 0,
+            sll_halen: 0,
+            sll_addr: [0; 8],
+        };
+        let rc = unsafe {
+            libc::bind(
+                fd.as_raw_fd(),
+                (&mut socket_addr as *mut libc::sockaddr_ll)
+                    .cast::<libc::sockaddr>(),
+                std::mem::size_of::<libc::sockaddr_ll>() as libc::socklen_t,
+            )
+        };
+        assert_eq!(rc, 0, "Failed to bind DHCP sniffer to {iface_name}");
+
+        Self {
+            fd,
+            pending: VecDeque::new(),
+        }
+    }
+
+    /// Return the next DHCPv4 message on the interface, or `None` when
+    /// `timeout` expired. Frames which are not DHCPv4 are skipped.
+    pub(crate) fn recv_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> Option<DhcpV4Message> {
+        if let Some(msg) = self.pending.pop_front() {
+            return Some(msg);
+        }
+        let deadline = Instant::now() + timeout;
+        loop {
+            let mut poll_fd = libc::pollfd {
+                fd: self.fd.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let remains = deadline.saturating_duration_since(Instant::now());
+            let rc = unsafe {
+                libc::poll(&mut poll_fd, 1, remains.as_millis() as libc::c_int)
+            };
+            if rc == -1 && Errno::last() == Errno::EINTR {
+                continue;
+            }
+            assert!(rc >= 0, "Failed to poll DHCP sniffer socket");
+            if poll_fd.revents & libc::POLLIN == 0 {
+                return None;
+            }
+
+            let mut buffer = [0u8; 1500];
+            loop {
+                match recv(self.fd.as_raw_fd(), &mut buffer, MsgFlags::empty())
+                {
+                    Ok(received) => {
+                        if let Ok(msg) =
+                            DhcpV4Message::parse_eth_packet(&buffer[..received])
+                        {
+                            self.pending.push_back(msg);
+                        }
+                    }
+                    Err(Errno::EAGAIN) => break,
+                    Err(e) => panic!("Failed to receive packet: {e}"),
+                }
+            }
+            // Several DHCP messages may be received in one batch, e.g. the
+            // DHCPDISCOVER and the following DHCPREQUEST of the same
+            // exchange, queue them instead of dropping any.
+            if let Some(msg) = self.pending.pop_front() {
+                return Some(msg);
+            }
+        }
+    }
 }

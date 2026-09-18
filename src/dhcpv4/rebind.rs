@@ -94,6 +94,11 @@ impl DhcpV4Client {
     }
 
     async fn _rebind(&mut self) -> Result<(), DhcpError> {
+        // RFC 2131 section 2 and Table 5: `secs` counts the seconds since
+        // the DHCP process started. Rebinding continues the process which
+        // began when the T1 timer expired, hence the counter is not
+        // restarted here.
+        let secs = self.trans_elapsed_secs();
         let lease = match self.lease.as_ref() {
             Some(l) => l,
             None => {
@@ -105,7 +110,8 @@ impl DhcpV4Client {
                 return Ok(());
             }
         };
-        let dhcp_msg = DhcpV4Message::new_rebind(self.xid, &self.config, lease);
+        let dhcp_msg =
+            DhcpV4Message::new_rebind(self.xid, &self.config, lease, secs);
         let xid = self.xid;
         let raw_socket = self.get_raw_socket_or_init().await?;
 

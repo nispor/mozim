@@ -349,8 +349,13 @@ impl DhcpV4Message {
         ret
     }
 
-    pub(crate) fn new_discovery(xid: u32, config: &DhcpV4Config) -> Self {
+    pub(crate) fn new_discovery(
+        xid: u32,
+        config: &DhcpV4Config,
+        secs: u16,
+    ) -> Self {
         let mut ret = Self::new(xid, config);
+        ret.secs = secs;
         ret.options
             .insert(DhcpV4Option::MessageType(DhcpV4MessageType::Discovery));
         ret.options.insert(DhcpV4Option::ParameterRequestList(
@@ -363,8 +368,10 @@ impl DhcpV4Message {
         xid: u32,
         config: &DhcpV4Config,
         lease: &DhcpV4Lease,
+        secs: u16,
     ) -> Self {
         let mut ret = Self::new(xid, config);
+        ret.secs = secs;
         ret.options
             .insert(DhcpV4Option::MessageType(DhcpV4MessageType::Request));
         if lease.srv_id != Ipv4Addr::UNSPECIFIED {
@@ -386,8 +393,9 @@ impl DhcpV4Message {
         xid: u32,
         config: &DhcpV4Config,
         lease: &DhcpV4Lease,
+        secs: u16,
     ) -> Self {
-        let mut ret = Self::new_request(xid, config, lease);
+        let mut ret = Self::new_request(xid, config, lease, secs);
         ret.ciaddr = lease.yiaddr;
         ret
     }
@@ -396,8 +404,9 @@ impl DhcpV4Message {
         xid: u32,
         config: &DhcpV4Config,
         lease: &DhcpV4Lease,
+        secs: u16,
     ) -> Self {
-        Self::new_renew(xid, config, lease)
+        Self::new_renew(xid, config, lease, secs)
     }
 
     pub(crate) fn new_release(
@@ -612,6 +621,8 @@ mod test {
         // otherwise the server cannot find the lease.
         assert_eq!(msg.ciaddr, lease.yiaddr);
         assert_eq!(msg.message_type(), Some(DhcpV4MessageType::Release));
+        // RFC 2131 table 5: DHCPRELEASE carries zero in the `secs` field.
+        assert_eq!(msg.secs, 0);
         assert_eq!(
             msg.options.get(DhcpV4OptionCode::ServerIdentifier),
             Some(&DhcpV4Option::ServerIdentifier(lease.srv_id))
@@ -650,7 +661,7 @@ mod test {
         })
         .unwrap();
 
-        let msg = DhcpV4Message::new_request(0x20260823, &config, &lease);
+        let msg = DhcpV4Message::new_request(0x20260823, &config, &lease, 0);
         assert_eq!(
             msg.options.get(DhcpV4OptionCode::ServerIdentifier),
             Some(&DhcpV4Option::ServerIdentifier(lease.srv_id))
@@ -670,10 +681,48 @@ mod test {
         assert!(fallback_lease.srv_id.is_unspecified());
 
         let msg =
-            DhcpV4Message::new_request(0x20260823, &config, &fallback_lease);
+            DhcpV4Message::new_request(0x20260823, &config, &fallback_lease, 0);
         assert_eq!(
             msg.options.get(DhcpV4OptionCode::ServerIdentifier),
             Some(&DhcpV4Option::ServerIdentifier(fallback_lease.siaddr))
         );
+    }
+
+    #[test]
+    fn test_secs_header_field() {
+        let mut config = DhcpV4Config::new("eth1");
+        config
+            .set_iface_mac_raw(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01])
+            .unwrap()
+            .use_mac_as_client_id();
+
+        let discovery = DhcpV4Message::new_discovery(0x20260918, &config, 1234);
+        assert_eq!(discovery.secs, 1234);
+        let raw = discovery.to_dhcp_packet().unwrap();
+        assert_eq!(DhcpV4Message::parse(&raw).unwrap().secs, 1234);
+
+        let mut opts = DhcpV4Options::new();
+        opts.insert(DhcpV4Option::IpAddressLeaseTime(100));
+        opts.insert(DhcpV4Option::ServerIdentifier(Ipv4Addr::new(
+            192, 0, 2, 1,
+        )));
+        let lease = DhcpV4Lease::new_from_msg(&DhcpV4Message {
+            yiaddr: Ipv4Addr::new(192, 0, 2, 115),
+            options: opts,
+            ..Default::default()
+        })
+        .unwrap();
+
+        // RFC 2131 section 3.1: the DHCPREQUEST must reuse the
+        // DHCPDISCOVER's `secs` value.
+        let request =
+            DhcpV4Message::new_request(0x20260918, &config, &lease, 1234);
+        assert_eq!(request.secs, discovery.secs);
+
+        let renew = DhcpV4Message::new_renew(0x20260918, &config, &lease, 7);
+        assert_eq!(renew.secs, 7);
+
+        let rebind = DhcpV4Message::new_rebind(0x20260918, &config, &lease, 8);
+        assert_eq!(rebind.secs, 8);
     }
 }
