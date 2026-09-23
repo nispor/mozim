@@ -9,6 +9,7 @@ mod msg;
 mod option;
 mod proiscuous;
 mod rebind;
+mod reboot;
 mod renew;
 mod request;
 mod socket;
@@ -26,4 +27,6 @@ pub use self::{
     },
     state::DhcpV4State,
 };
-pub(crate) use self::{msg::DhcpV4Message, socket::DhcpV4Socket};
+pub(crate) use self::{
+    client::InitMode, msg::DhcpV4Message, socket::DhcpV4Socket,
+};

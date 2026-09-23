@@ -2,7 +2,9 @@
 
 use std::time::Duration;
 
-use super::{DhcpV4Message, DhcpV4MessageType, DhcpV4Socket, DhcpV4State};
+use super::{
+    DhcpV4Message, DhcpV4MessageType, DhcpV4Socket, DhcpV4State, InitMode,
+};
 use crate::{DhcpError, DhcpV4Client};
 
 impl DhcpV4Client {
@@ -68,6 +70,7 @@ impl DhcpV4Client {
 
     async fn _discovery(&mut self) -> Result<(), DhcpError> {
         self.state = DhcpV4State::InitReboot;
+        self.init_mode = InitMode::Discover;
         self.lease = None;
         let dhcp_msg = DhcpV4Message::new_discovery(self.xid, &self.config);
         let xid = self.xid;

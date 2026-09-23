@@ -27,6 +27,15 @@ const PACKET_HOST: u8 = 0; // a packet addressed to the local host
 pub(crate) const SERVER_PORT: u16 = 67;
 pub(crate) const CLIENT_PORT: u16 = 68;
 
+/// Reply from a DHCP server to a DHCPREQUEST used for verifying or
+/// (re)acquiring a lease.
+pub(crate) enum DhcpV4Reply {
+    /// DHCPACK carrying the granted lease.
+    Ack(Box<DhcpV4Lease>),
+    /// DHCPNAK: the server refused the request.
+    Nak,
+}
+
 pub(crate) trait DhcpV4Socket {
     fn recv(&self) -> impl Future<Output = Result<Vec<u8>, DhcpError>> + Send;
     fn send(
@@ -84,6 +93,67 @@ pub(crate) trait DhcpV4Socket {
                      {reply_dhcp_msg:?}"
                 );
                 Ok(None)
+            }
+        }
+    }
+
+    /// Wait for a DHCP server reply to a DHCPREQUEST, distinguishing between
+    /// DHCPACK (lease granted) and DHCPNAK (request refused). Returns `None`
+    /// for packets that should be ignored (wrong xid, unexpected message type
+    /// or a DHCPACK without a usable lease).
+    fn recv_dhcp_reply(
+        &self,
+        xid: u32,
+    ) -> impl Future<Output = Result<Option<DhcpV4Reply>, DhcpError>> + Send
+    where
+        Self: Sync,
+    {
+        async move {
+            let buffer: Vec<u8> = self.recv().await?;
+            log::trace!("Received DHCP reply {buffer:?}");
+            let reply_dhcp_msg = if self.is_raw() {
+                DhcpV4Message::parse_eth_packet(&buffer)?
+            } else {
+                DhcpV4Message::parse(&buffer)?
+            };
+            let message_type = if let Some(t) = reply_dhcp_msg.message_type() {
+                t
+            } else {
+                log::debug!(
+                    "Dropping DHCP message due to missing message type option"
+                );
+                return Ok(None);
+            };
+            if reply_dhcp_msg.xid != xid {
+                log::debug!(
+                    "Dropping DHCP message due to xid miss-match. Expecting \
+                     {}, got {}",
+                    xid,
+                    reply_dhcp_msg.xid
+                );
+                return Ok(None);
+            }
+            match message_type {
+                DhcpV4MessageType::Ack => {
+                    if let Some(lease) = reply_dhcp_msg.lease() {
+                        Ok(Some(DhcpV4Reply::Ack(Box::new(lease))))
+                    } else {
+                        log::debug!(
+                            "No lease found in the DHCPACK from DHCP server \
+                             {reply_dhcp_msg:?}"
+                        );
+                        Ok(None)
+                    }
+                }
+                DhcpV4MessageType::Nack => Ok(Some(DhcpV4Reply::Nak)),
+                _ => {
+                    log::debug!(
+                        "Dropping DHCP message due to unexpected type {}, \
+                         expecting DHCPACK or DHCPNAK",
+                        message_type
+                    );
+                    Ok(None)
+                }
             }
         }
     }

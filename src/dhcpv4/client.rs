@@ -36,6 +36,7 @@ pub struct DhcpV4Client {
     pub(crate) lease: Option<DhcpV4Lease>,
     pub(crate) pending_lease: Option<DhcpV4Lease>,
     pub(crate) state: DhcpV4State,
+    pub(crate) init_mode: InitMode,
     pub(crate) raw_socket: Option<DhcpRawSocket>,
     pub(crate) udp_socket: Option<DhcpUdpV4Socket>,
     pub(crate) retry_count: u32,
@@ -47,6 +48,18 @@ pub struct DhcpV4Client {
     error: Option<DhcpError>,
 }
 
+/// Internal phase selector for [`DhcpV4State::InitReboot`].
+///
+/// The public state enum has no separate INIT-REBOOT variant, so this flag
+/// distinguishes sending DHCPDISCOVER (RFC 2131 INIT) from broadcasting a
+/// DHCPREQUEST to verify a supplied lease (RFC 2131 INIT-REBOOT).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InitMode {
+    #[default]
+    Discover,
+    Reboot,
+}
+
 impl DhcpV4Client {
     pub async fn init(
         mut config: DhcpV4Config,
@@ -56,10 +69,15 @@ impl DhcpV4Client {
             config.resolve().await?;
         }
 
-        let state = if lease.is_some() {
-            DhcpV4State::Selecting
+        // When a previously allocated lease is provided, the client begins
+        // in RFC 2131 INIT-REBOOT and broadcasts a DHCPREQUEST to verify the
+        // lease is still valid before using it. Otherwise it starts at INIT
+        // with DHCPDISCOVER. Both use DhcpV4State::InitReboot; `init_mode`
+        // selects the message to send.
+        let init_mode = if lease.is_some() {
+            InitMode::Reboot
         } else {
-            DhcpV4State::InitReboot
+            InitMode::Discover
         };
 
         let xid = rand::random();
@@ -67,7 +85,8 @@ impl DhcpV4Client {
         Ok(Self {
             config,
             lease,
-            state,
+            state: DhcpV4State::InitReboot,
+            init_mode,
             xid,
             ..Default::default()
         })
@@ -123,7 +142,10 @@ impl DhcpV4Client {
 
     async fn run_without_timeout(&mut self) -> Result<DhcpV4State, DhcpError> {
         let result = match self.state {
-            DhcpV4State::InitReboot => self.discovery().await,
+            DhcpV4State::InitReboot => match self.init_mode {
+                InitMode::Discover => self.discovery().await,
+                InitMode::Reboot => self.reboot().await,
+            },
             DhcpV4State::Selecting => self.request().await,
             DhcpV4State::Renewing => self.renew().await,
             DhcpV4State::Rebinding => self.rebind().await,
@@ -173,6 +195,7 @@ impl DhcpV4Client {
 
     pub fn clean_up(&mut self) {
         self.state = DhcpV4State::InitReboot;
+        self.init_mode = InitMode::Discover;
         self.lease = None;
         self.pending_lease = None;
         self.udp_socket = None;
@@ -193,6 +216,10 @@ impl DhcpV4Client {
         self.pending_lease = None;
         self.lease = Some(lease.clone());
         self.retry_count = 0;
+        // INIT-REBOOT is only used once at startup to verify a supplied
+        // lease. Once any lease is acquired, every future restart must use
+        // DHCPDISCOVER
+        self.init_mode = InitMode::Discover;
         self.state = DhcpV4State::Done(Box::new(lease));
         Ok(())
     }
@@ -343,6 +370,41 @@ mod test {
             "unexpected error message: {}",
             err.msg()
         );
+    }
+
+    #[tokio::test]
+    async fn test_init_with_lease_uses_reboot_mode() {
+        // RFC 2131 4.4.2: providing a cached lease must trigger the
+        // INIT-REBOOT verification instead of jumping straight to a bound or
+        // selecting state.
+        let mut config = DhcpV4Config::new("eth1");
+        config
+            .set_iface_index(2)
+            .set_iface_mac_raw(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01])
+            .unwrap();
+        let mut lease = DhcpV4Lease::default();
+        lease.t1_sec = 30;
+        lease.t2_sec = 60;
+        lease.lease_time_sec = 100;
+        let cli = DhcpV4Client::init(config, Some(lease.clone()))
+            .await
+            .unwrap();
+        assert_eq!(cli.state, DhcpV4State::InitReboot);
+        assert_eq!(cli.init_mode, InitMode::Reboot);
+        assert_eq!(cli.lease, Some(lease));
+    }
+
+    #[tokio::test]
+    async fn test_init_without_lease_uses_discover_mode() {
+        let mut config = DhcpV4Config::new("eth1");
+        config
+            .set_iface_index(2)
+            .set_iface_mac_raw(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01])
+            .unwrap();
+        let cli = DhcpV4Client::init(config, None).await.unwrap();
+        assert_eq!(cli.state, DhcpV4State::InitReboot);
+        assert_eq!(cli.init_mode, InitMode::Discover);
+        assert_eq!(cli.lease, None);
     }
 
     #[test]

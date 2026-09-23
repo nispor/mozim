@@ -8,7 +8,10 @@ use crate::DhcpV4Lease;
 pub enum DhcpV4State {
     /// DHCP lease acquired, waiting T1/T2 to refresh the lease
     Done(Box<DhcpV4Lease>),
-    /// Sending broadcast DHCPDISCOVER to server and waiting DHCPOFFER
+    /// Sending the initial broadcast and waiting for a server reply:
+    /// DHCPDISCOVER/DHCPOFFER (RFC 2131 INIT) when no cached lease is
+    /// supplied, or DHCPREQUEST/DHCPACK(DHCPNAK) when verifying a cached
+    /// lease (RFC 2131 INIT-REBOOT)
     #[default]
     InitReboot,
     /// Sending broadcast DHCPREQUEST to server and waiting DHCPACK
