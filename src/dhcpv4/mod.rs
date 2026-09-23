@@ -9,6 +9,7 @@ mod msg;
 mod option;
 mod proiscuous;
 mod rebind;
+mod reboot;
 mod renew;
 mod request;
 mod socket;

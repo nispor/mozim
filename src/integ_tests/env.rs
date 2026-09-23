@@ -112,6 +112,7 @@ fn start_dhcp_server() {
         --except-interface=lo
         --clear-on-reload
         --interface=dhcpsrv
+        --dhcp-authoritative
         --dhcp-range=192.0.2.2,192.0.2.50,60
         --dhcp-range=2001:db8:a::2,2001:db8:a::ff,64,2m
         --no-ping

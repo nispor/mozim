@@ -13,6 +13,9 @@ pub enum DhcpV4State {
     InitReboot,
     /// Sending broadcast DHCPREQUEST to server and waiting DHCPACK
     Selecting,
+    /// A cached lease was provided, sending broadcast DHCPREQUEST to verify it
+    /// is still valid and waiting DHCPACK/DHCPNAK
+    Rebooting,
     /// T1 expired, sending unicast DHCPREQUEST and waiting DHCPACK
     Renewing,
     /// T2 expired, sending broadcast DHCPREQUEST and waiting DHCPACK
@@ -25,6 +28,7 @@ impl std::fmt::Display for DhcpV4State {
             Self::Done(lease) => write!(f, "done({})", lease.yiaddr),
             Self::InitReboot => write!(f, "init_reboot"),
             Self::Selecting => write!(f, "selecting"),
+            Self::Rebooting => write!(f, "rebooting"),
             Self::Renewing => write!(f, "renewing"),
             Self::Rebinding => write!(f, "rebinding"),
         }
