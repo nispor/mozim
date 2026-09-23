@@ -56,8 +56,11 @@ impl DhcpV4Client {
             config.resolve().await?;
         }
 
+        // When a previously allocated lease is provided, the client begins
+        // in INIT-REBOOT state and broadcasts a DHCPREQUEST to verify the
+        // lease is still valid before using it.
         let state = if lease.is_some() {
-            DhcpV4State::Selecting
+            DhcpV4State::Rebooting
         } else {
             DhcpV4State::InitReboot
         };
@@ -125,6 +128,7 @@ impl DhcpV4Client {
         let result = match self.state {
             DhcpV4State::InitReboot => self.discovery().await,
             DhcpV4State::Selecting => self.request().await,
+            DhcpV4State::Rebooting => self.reboot().await,
             DhcpV4State::Renewing => self.renew().await,
             DhcpV4State::Rebinding => self.rebind().await,
             DhcpV4State::Done(_) => self.wait_t1_timer().await,
@@ -343,6 +347,39 @@ mod test {
             "unexpected error message: {}",
             err.msg()
         );
+    }
+
+    #[tokio::test]
+    async fn test_init_with_lease_enters_rebooting() {
+        // RFC 2131 4.4.2: providing a cached lease must trigger the
+        // INIT-REBOOT verification instead of jumping straight to a bound or
+        // selecting state.
+        let mut config = DhcpV4Config::new("eth1");
+        config
+            .set_iface_index(2)
+            .set_iface_mac_raw(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01])
+            .unwrap();
+        let mut lease = DhcpV4Lease::default();
+        lease.t1_sec = 30;
+        lease.t2_sec = 60;
+        lease.lease_time_sec = 100;
+        let cli = DhcpV4Client::init(config, Some(lease.clone()))
+            .await
+            .unwrap();
+        assert_eq!(cli.state, DhcpV4State::Rebooting);
+        assert_eq!(cli.lease, Some(lease));
+    }
+
+    #[tokio::test]
+    async fn test_init_without_lease_enters_init_reboot() {
+        let mut config = DhcpV4Config::new("eth1");
+        config
+            .set_iface_index(2)
+            .set_iface_mac_raw(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01])
+            .unwrap();
+        let cli = DhcpV4Client::init(config, None).await.unwrap();
+        assert_eq!(cli.state, DhcpV4State::InitReboot);
+        assert_eq!(cli.lease, None);
     }
 
     #[test]
