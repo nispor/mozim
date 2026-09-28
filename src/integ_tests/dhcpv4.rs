@@ -122,6 +122,116 @@ fn test_dhcpv4_unicast_renew_uses_srv_id() {
     });
 }
 
+// RFC 2131 4.4.2: when a previously allocated lease is supplied to
+// DhcpV4Client::init(), the client must begin in INIT-REBOOT state and
+// broadcast a DHCPREQUEST to verify the lease. A server holding that lease
+// confirms it with a DHCPACK, so the client should reuse the very same
+// address without falling back to DHCPDISCOVER.
+#[test]
+fn test_dhcpv4_reboot_confirms_valid_lease() {
+    init_log();
+    with_dhcp_env(|| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .enable_io()
+            .build()
+            .unwrap();
+
+        rt.block_on(async {
+            let mut config = DhcpV4Config::new(TEST_NIC_CLI);
+            config.set_host_name(FOO1_HOSTNAME);
+            config.use_host_name_as_client_id();
+
+            // First acquire a lease the normal way so the server has a
+            // record of it.
+            let lease = acquire_lease(config.clone()).await;
+            assert_eq!(lease.yiaddr, FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID);
+
+            // Re-init with the cached lease: the client must verify it via
+            // INIT-REBOOT instead of jumping straight into DHCPDISCOVER.
+            let mut cli = DhcpV4Client::init(config, Some(lease.clone()))
+                .await
+                .unwrap();
+            assert_eq!(cli.state, DhcpV4State::Rebooting);
+
+            let confirmed = timeout(Duration::from_secs(30), async {
+                loop {
+                    if let DhcpV4State::Done(l) = cli.run().await.unwrap() {
+                        break *l;
+                    }
+                }
+            })
+            .await
+            .expect("Timed out verifying cached lease via INIT-REBOOT");
+
+            // The server confirmed (DHCPACK) the cached lease, so the same
+            // address is kept.
+            assert_eq!(confirmed.yiaddr, lease.yiaddr);
+            cli.release(&confirmed).await.unwrap();
+        });
+    })
+}
+
+// RFC 2131 4.4.2 / 4.3.2: if the cached lease is no longer valid (here it is
+// on the wrong network), the server replies with a DHCPNAK and the client
+// must restart the acquisition process from INIT state (DHCPDISCOVER) to
+// obtain a fresh lease.
+#[test]
+fn test_dhcpv4_reboot_falls_back_on_invalid_lease() {
+    init_log();
+    with_dhcp_env(|| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .enable_io()
+            .build()
+            .unwrap();
+
+        rt.block_on(async {
+            let mut config = DhcpV4Config::new(TEST_NIC_CLI);
+            config.set_host_name(FOO1_HOSTNAME);
+            config.use_host_name_as_client_id();
+
+            // Start from a real lease, then move it to a subnet the server
+            // does not serve. The server serves 192.0.2.0/24, so an
+            // INIT-REBOOT for a 198.51.100.0/24 address must be rejected
+            // with a DHCPNAK.
+            let mut stale_lease = acquire_lease(config.clone()).await;
+            stale_lease.yiaddr = Ipv4Addr::new(198, 51, 100, 50);
+
+            let mut cli = DhcpV4Client::init(config, Some(stale_lease.clone()))
+                .await
+                .unwrap();
+            assert_eq!(cli.state, DhcpV4State::Rebooting);
+
+            let lease = timeout(Duration::from_secs(30), async {
+                loop {
+                    if let DhcpV4State::Done(l) = cli.run().await.unwrap() {
+                        break *l;
+                    }
+                }
+            })
+            .await
+            .expect("Timed out falling back to DHCPDISCOVER after DHCPNAK");
+
+            // The stale address was rejected, so the client fell back to
+            // requesting a brand new lease.
+            assert_ne!(lease.yiaddr, stale_lease.yiaddr);
+            assert_eq!(lease.yiaddr, FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID);
+            cli.release(&lease).await.unwrap();
+        });
+    })
+}
+
+// Acquire a DHCP lease through the normal DHCPDISCOVER/DHCPREQUEST flow.
+async fn acquire_lease(config: DhcpV4Config) -> DhcpV4Lease {
+    let mut cli = DhcpV4Client::init(config, None).await.unwrap();
+    loop {
+        if let DhcpV4State::Done(lease) = cli.run().await.unwrap() {
+            return *lease;
+        }
+    }
+}
+
 async fn get_lease() -> Option<DhcpV4Lease> {
     let mut config = DhcpV4Config::new(TEST_NIC_CLI);
     // Since hostname hasn't been set yet, client_id should be empty.

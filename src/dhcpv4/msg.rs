@@ -382,6 +382,22 @@ impl DhcpV4Message {
         ret
     }
 
+    pub(crate) fn new_reboot(
+        xid: u32,
+        config: &DhcpV4Config,
+        lease: &DhcpV4Lease,
+    ) -> Self {
+        let mut ret = Self::new(xid, config);
+        ret.options
+            .insert(DhcpV4Option::MessageType(DhcpV4MessageType::Request));
+        ret.options
+            .insert(DhcpV4Option::RequestedIpAddress(lease.yiaddr));
+        ret.options.insert(DhcpV4Option::ParameterRequestList(
+            config.request_opts.to_vec(),
+        ));
+        ret
+    }
+
     pub(crate) fn new_renew(
         xid: u32,
         config: &DhcpV4Config,
@@ -628,6 +644,43 @@ mod test {
                 .ciaddr,
             lease.yiaddr
         );
+    }
+
+    #[test]
+    fn test_reboot_msg() {
+        let mut config = DhcpV4Config::new("eth1");
+        config
+            .set_iface_mac_raw(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01])
+            .unwrap()
+            .use_mac_as_client_id();
+
+        let mut opts = DhcpV4Options::new();
+        opts.insert(DhcpV4Option::IpAddressLeaseTime(100));
+        opts.insert(DhcpV4Option::ServerIdentifier(Ipv4Addr::new(
+            192, 0, 2, 1,
+        )));
+        let lease = DhcpV4Lease::new_from_msg(&DhcpV4Message {
+            yiaddr: Ipv4Addr::new(192, 0, 2, 115),
+            options: opts,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let msg = DhcpV4Message::new_reboot(0x20260823, &config, &lease);
+
+        assert_eq!(msg.message_type(), Some(DhcpV4MessageType::Request));
+        // RFC 2131 4.3.2 INIT-REBOOT: 'requested IP address' MUST be the
+        // cached address, 'ciaddr' MUST be zero and 'server identifier' MUST
+        // NOT be present.
+        assert_eq!(
+            msg.options.get(DhcpV4OptionCode::RequestedIpAddress),
+            Some(&DhcpV4Option::RequestedIpAddress(lease.yiaddr))
+        );
+        assert_eq!(msg.ciaddr, Ipv4Addr::UNSPECIFIED);
+        assert!(msg
+            .options
+            .get(DhcpV4OptionCode::ServerIdentifier)
+            .is_none());
     }
 
     #[test]
