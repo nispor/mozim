@@ -1,3 +1,11 @@
+- DHCPv4 DHCPREQUEST messages during RENEWING/REBINDING carry the
+  `server identifier` and `requested IP address` options.
+  `new_renew()`/`new_rebind()` (`src/dhcpv4/msg.rs`) build on
+  `new_request()`, which always inserts both options, but RFC 2131
+  section 4.3.2 says they MUST NOT be filled in when the DHCPREQUEST
+  is generated during RENEWING or REBINDING (only `ciaddr` must be
+  set). ISC dhclient only sends the server identifier in SELECTING
+  state and the requested address in SELECTING/INIT-REBOOT state.
 - DHCPv4 address-list options with malformed length yield a partial
   or empty list instead of being rejected. `DomainNameServer`(6),
   `Router`(3) and `NtpServers`(42) parse `len / 4` addresses and

@@ -45,6 +45,8 @@ impl DhcpV4Client {
 
     // Unicast DHCPREQUEST to DHCP server
     pub(crate) async fn renew(&mut self) -> Result<(), DhcpError> {
+        // A renewal is a new DHCP process; `secs` counts from its start.
+        self.start_trans_timer();
         loop {
             let max_wait_time = self.renew_max_wait_time()?;
 
@@ -87,6 +89,7 @@ impl DhcpV4Client {
     }
 
     async fn _renew(&mut self) -> Result<(), DhcpError> {
+        let secs = self.trans_elapsed_secs();
         let lease = match self.lease.as_ref() {
             Some(l) => l,
             None => {
@@ -98,7 +101,8 @@ impl DhcpV4Client {
                 return Ok(());
             }
         };
-        let dhcp_msg = DhcpV4Message::new_renew(self.xid, &self.config, lease);
+        let dhcp_msg =
+            DhcpV4Message::new_renew(self.xid, &self.config, lease, secs);
         let xid = self.xid;
         let udp_socket = self.get_udp_socket_or_init().await?;
 

@@ -36,7 +36,6 @@ impl DhcpV6Client {
         //    be delayed by a random amount of time between 0 and
         //    SOL_MAX_DELAY.
         if self.retransmit_count == 0 {
-            self.trans_begin_time = Instant::now();
             let wait_time_ms: u64 = rand::random_range(0..SOL_MAX_DELAY_MS);
             log::info!(
                 "Waiting {wait_time_ms} miliseconds before start initial \
@@ -45,6 +44,11 @@ impl DhcpV6Client {
 
             tokio::time::sleep(std::time::Duration::from_millis(wait_time_ms))
                 .await;
+            // RFC 8415 21.9: the elapsed time is measured from the first
+            // message of the message exchange and is 0 in that first
+            // message. The SOL_MAX_DELAY wait happens before the first
+            // Solicit is sent, so the counter starts after it.
+            self.trans_begin_time = Instant::now();
         }
         // TODO(Gris Ge): Once received the same SOL_MAX_DELAY from all
         // DHCP servers before timeout, we should store it instead of using

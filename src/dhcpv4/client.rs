@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use std::time::{Duration, Instant};
+
 use super::{
     socket::{DhcpRawSocket, DhcpUdpV4Socket, DhcpV4Socket},
     DhcpV4Message,
@@ -44,6 +46,14 @@ pub struct DhcpV4Client {
     pub(crate) t2_timer: Option<DhcpTimer>,
     pub(crate) lease_timer: Option<DhcpTimer>,
     pub(crate) timeout_timer: Option<DhcpTimer>,
+    /// Start time of the current address acquisition or renewal process,
+    /// used to fill the DHCPv4 header's `secs` field.
+    pub(crate) trans_start_time: Option<Instant>,
+    /// `secs` value of the DHCPDISCOVER message which the pending
+    /// DHCPOFFER replies to, `None` when no DHCPDISCOVER has been sent
+    /// yet. RFC 2131 section 3.1 requires the DHCPREQUEST to use the same
+    /// value.
+    pub(crate) discovery_secs: Option<u16>,
     error: Option<DhcpError>,
 }
 
@@ -110,15 +120,54 @@ impl DhcpV4Client {
         }
     }
 
-    fn get_timeout_remains(
-        &mut self,
-    ) -> Result<std::time::Duration, DhcpError> {
+    fn get_timeout_remains(&mut self) -> Result<Duration, DhcpError> {
         if self.timeout_timer.is_none() {
-            self.timeout_timer = Some(DhcpTimer::new(
-                std::time::Duration::from_secs(self.config.timeout_sec.into()),
-            )?);
+            self.timeout_timer = Some(DhcpTimer::new(Duration::from_secs(
+                self.config.timeout_sec.into(),
+            ))?);
         }
         self.timeout_timer.as_ref().unwrap().remains()
+    }
+
+    pub(crate) fn start_trans_timer(&mut self) {
+        self.trans_start_time = Some(Instant::now());
+    }
+
+    /// Elapsed seconds of the current DHCPv4 transaction, used to fill
+    /// the `secs` header field.
+    ///
+    /// RFC 2131 section 2: the `secs` header field is filled in by the
+    /// client with the seconds elapsed since it began address acquisition
+    /// or renewal, Table 5 (section 4.4.1) permits either 0 or that
+    /// value. The timer starts on first use, so a client which does not
+    /// start with a DHCPDISCOVER still counts from its first message.
+    /// The field is 16 bits wide, so saturate instead of wrapping around.
+    pub(crate) fn trans_elapsed_secs(&mut self) -> u16 {
+        let start_time =
+            *self.trans_start_time.get_or_insert_with(Instant::now);
+        u16::try_from(start_time.elapsed().as_secs()).unwrap_or(u16::MAX)
+    }
+
+    /// The `secs` header field value for the DHCPREQUEST message.
+    ///
+    /// RFC 2131 section 3.1:
+    ///     To help ensure that any BOOTP relay agents forward the
+    ///     DHCPREQUEST message to the same set of DHCP servers that
+    ///     received the original DHCPDISCOVER message, the DHCPREQUEST
+    ///     message MUST use the same value in the DHCP message header's
+    ///     'secs' field and be sent to the same IP broadcast address as
+    ///     the original DHCPDISCOVER message.
+    ///
+    /// The DHCPDISCOVER value is deliberately kept instead of counting
+    /// forward, not even when the DHCPREQUEST is retransmitted.
+    pub(crate) fn gen_request_secs(&mut self) -> u16 {
+        match self.discovery_secs {
+            Some(secs) => secs,
+            // RFC 2131 Table 5 allows using the seconds since this DHCP
+            // process started when no DHCPDISCOVER message was sent, e.g.
+            // when the client starts with an existing lease.
+            None => self.trans_elapsed_secs(),
+        }
     }
 
     async fn run_without_timeout(&mut self) -> Result<DhcpV4State, DhcpError> {
@@ -181,6 +230,8 @@ impl DhcpV4Client {
         self.t2_timer = None;
         self.lease_timer = None;
         self.timeout_timer = None;
+        self.trans_start_time = None;
+        self.discovery_secs = None;
         self.error = None;
     }
 
@@ -193,6 +244,8 @@ impl DhcpV4Client {
         self.pending_lease = None;
         self.lease = Some(lease.clone());
         self.retry_count = 0;
+        self.trans_start_time = None;
+        self.discovery_secs = None;
         self.state = DhcpV4State::Done(Box::new(lease));
         Ok(())
     }
@@ -281,6 +334,60 @@ mod test {
         assert!(cli.timeout_timer.is_some());
         cli.clean_up();
         assert!(cli.timeout_timer.is_none());
+    }
+
+    #[test]
+    fn test_clean_up_resets_secs() {
+        let mut cli = DhcpV4Client::default();
+        cli.start_trans_timer();
+        cli.discovery_secs = Some(42);
+        assert_eq!(cli.trans_elapsed_secs(), 0);
+        assert_eq!(cli.gen_request_secs(), 42);
+
+        cli.clean_up();
+
+        assert!(cli.trans_start_time.is_none());
+        assert_eq!(cli.discovery_secs, None);
+        assert_eq!(cli.trans_elapsed_secs(), 0);
+    }
+
+    #[test]
+    fn test_secs_saturates_at_u16_max() {
+        let mut cli = DhcpV4Client {
+            trans_start_time: Some(
+                Instant::now() - Duration::from_secs(u64::from(u16::MAX) + 1),
+            ),
+            ..Default::default()
+        };
+        assert_eq!(cli.trans_elapsed_secs(), u16::MAX);
+    }
+
+    #[test]
+    fn test_secs_starts_on_first_use() {
+        let mut cli = DhcpV4Client::default();
+        assert!(cli.trans_start_time.is_none());
+        assert_eq!(cli.trans_elapsed_secs(), 0);
+        assert!(cli.trans_start_time.is_some());
+    }
+
+    #[test]
+    fn test_gen_request_secs_reuses_discovery_secs() {
+        let mut cli = DhcpV4Client {
+            trans_start_time: Some(Instant::now() - Duration::from_secs(70)),
+            discovery_secs: Some(3),
+            ..Default::default()
+        };
+        // RFC 2131 section 3.1: the DHCPREQUEST MUST reuse the
+        // DHCPDISCOVER `secs` value even when much more time has elapsed.
+        assert_eq!(cli.gen_request_secs(), 3);
+    }
+
+    #[test]
+    fn test_gen_request_secs_without_discovery_counts_from_start() {
+        let mut cli = DhcpV4Client::default();
+        assert_eq!(cli.gen_request_secs(), 0);
+        cli.trans_start_time = Some(Instant::now() - Duration::from_secs(70));
+        assert_eq!(cli.gen_request_secs(), 70);
     }
 
     #[test]
