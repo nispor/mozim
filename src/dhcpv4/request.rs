@@ -22,6 +22,7 @@ impl DhcpV4Client {
                     );
                     // We assume the failure is instant, so will not consider
                     // the time elapsed.
+                    self.retry_count += 1;
                     tokio::time::sleep(max_wait_time).await;
                 }
                 Err(_) => {
