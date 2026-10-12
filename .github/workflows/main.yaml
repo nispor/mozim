@@ -37,7 +37,7 @@ jobs:
 
     steps:
     - name: Install packages
-      run:  sudo apt-get -y install dnsmasq busybox
+      run:  sudo apt-get update && sudo apt-get -y install dnsmasq busybox
 
     - uses: actions/checkout@v6
 
