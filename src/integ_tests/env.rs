@@ -102,6 +102,7 @@ fn start_dhcp_server() {
         --dhcp-option=option:dns-server,8.8.8.8,1.1.1.1
         --dhcp-option=option:mtu,1492
         --dhcp-option=option:domain-name,example.com
+        --dhcp-option=option:domain-search,example.com,internal.example.com
         --dhcp-option=option:ntp-server,192.0.2.1
         --dhcp-option=option6:domain-search,example.com,example.org
         --dhcp-option=option6:ntp-server,ntp.example.com,ntp2.example.com

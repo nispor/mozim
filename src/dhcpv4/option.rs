@@ -29,6 +29,8 @@ pub enum DhcpV4OptionCode {
     DomainName,
     /// Classless Static Route (RFC 3442)
     ClasslessStaticRoute,
+    /// Domain Search (RFC 3397)
+    DomainSearch,
     ServerIdentifier,
     Message,
     Other(u8),
@@ -53,6 +55,7 @@ const CODE_MESSAGE: u8 = 56;
 const CODE_RENEWAL_TIME: u8 = 58;
 const CODE_REBIND_TIME: u8 = 59;
 const CODE_CLIENT_IDENTIFIER: u8 = 61;
+const CODE_DOMAIN_SEARCH: u8 = 119;
 const CODE_CLASSLESS_STATIC_ROUTE: u8 = 121;
 const CODE_END: u8 = 255;
 
@@ -83,6 +86,7 @@ impl From<DhcpV4OptionCode> for u8 {
             DhcpV4OptionCode::ClasslessStaticRoute => {
                 CODE_CLASSLESS_STATIC_ROUTE
             }
+            DhcpV4OptionCode::DomainSearch => CODE_DOMAIN_SEARCH,
             DhcpV4OptionCode::Message => CODE_MESSAGE,
             DhcpV4OptionCode::Other(d) => d,
         }
@@ -112,6 +116,7 @@ impl From<u8> for DhcpV4OptionCode {
             CODE_NTP_SERVERS => Self::NtpServers,
             CODE_DOMAIN_NAME => Self::DomainName,
             CODE_CLASSLESS_STATIC_ROUTE => Self::ClasslessStaticRoute,
+            CODE_DOMAIN_SEARCH => Self::DomainSearch,
             CODE_MESSAGE => Self::Message,
             _ => Self::Other(d),
         }
@@ -147,6 +152,7 @@ pub enum DhcpV4Option {
     NtpServers(Vec<Ipv4Addr>),
     DomainName(String),
     ClasslessStaticRoute(Vec<DhcpV4ClasslessRoute>),
+    DomainSearch(Vec<String>),
     Message(String),
     Unknown(DhcpV4OptionUnknown),
 }
@@ -177,6 +183,7 @@ impl DhcpV4Option {
             Self::ClasslessStaticRoute(_) => {
                 DhcpV4OptionCode::ClasslessStaticRoute
             }
+            Self::DomainSearch(_) => DhcpV4OptionCode::DomainSearch,
             Self::BroadcastAddress(_) => DhcpV4OptionCode::BroadcastAddress,
             Self::Message(_) => DhcpV4OptionCode::Message,
             Self::Unknown(v) => v.code.into(),
@@ -329,6 +336,12 @@ impl DhcpV4Option {
                     DhcpV4ClasslessRoutes::parse(raw)?
                 })
             }
+            DhcpV4OptionCode::DomainSearch => Self::DomainSearch({
+                let raw = opt_buf
+                    .get_bytes(len)
+                    .context("Invalid DHCPv4 option for domain search(119)")?;
+                DhcpV4DomainSearch::parse(raw)?
+            }),
             DhcpV4OptionCode::Message => Self::Message(
                 opt_buf
                     .get_string_with_null(len)
@@ -414,6 +427,9 @@ impl DhcpV4Option {
             }
             Self::ClasslessStaticRoute(rts) => {
                 DhcpV4ClasslessRoutes::emit(rts.as_slice(), buf);
+            }
+            Self::DomainSearch(names) => {
+                DhcpV4DomainSearch::emit(names.as_slice(), buf);
             }
             Self::Unknown(v) => {
                 buf.write_u8(v.data.len() as u8);
@@ -724,6 +740,188 @@ impl DhcpV4ClasslessRoutes {
     }
 }
 
+/// Domain Search list
+///
+/// Defined by RFC 3397. The value is a sequence of domain names encoded in
+/// the DNS wire format, optionally using DNS name compression pointers.
+pub(crate) struct DhcpV4DomainSearch;
+
+impl DhcpV4DomainSearch {
+    const MAX_LABEL_LEN: usize = 63;
+    const POINTER_MASK: u8 = 0xc0;
+    const POINTER_MAX_OFFSET: usize = 0x3fff;
+
+    pub(crate) fn parse(data: &[u8]) -> Result<Vec<String>, DhcpError> {
+        let mut ret = Vec::new();
+        let mut pos = 0;
+        while pos < data.len() {
+            let (name, next) = Self::parse_name(data, pos)?;
+            ret.push(name);
+            pos = next;
+        }
+        Ok(ret)
+    }
+
+    fn parse_name(
+        data: &[u8],
+        start: usize,
+    ) -> Result<(String, usize), DhcpError> {
+        let err_str = "Invalid DHCPv4 option for domain search(119)";
+        let mut labels: Vec<&str> = Vec::new();
+        let mut pos = start;
+        let mut next_pos: Option<usize> = None;
+        let mut jumps = 0usize;
+
+        loop {
+            let len = *data.get(pos).ok_or_else(|| {
+                DhcpError::new(
+                    ErrorKind::InvalidDhcpMessage,
+                    format!("{err_str}: truncated domain name"),
+                )
+            })?;
+            match len & Self::POINTER_MASK {
+                0x00 => {
+                    if len == 0 {
+                        pos += 1;
+                        if next_pos.is_none() {
+                            next_pos = Some(pos);
+                        }
+                        break;
+                    }
+                    let label_len = usize::from(len);
+                    let end = pos + 1 + label_len;
+                    if end > data.len() {
+                        return Err(DhcpError::new(
+                            ErrorKind::InvalidDhcpMessage,
+                            format!("{err_str}: truncated label"),
+                        ));
+                    }
+                    let label = std::str::from_utf8(&data[pos + 1..end])
+                        .map_err(|e| {
+                            DhcpError::new(
+                                ErrorKind::InvalidDhcpMessage,
+                                format!("{err_str}: invalid label: {e}"),
+                            )
+                        })?;
+                    labels.push(label);
+                    pos = end;
+                }
+                Self::POINTER_MASK => {
+                    let low = *data.get(pos + 1).ok_or_else(|| {
+                        DhcpError::new(
+                            ErrorKind::InvalidDhcpMessage,
+                            format!("{err_str}: truncated compression pointer"),
+                        )
+                    })?;
+                    let offset = (usize::from(len & !Self::POINTER_MASK) << 8)
+                        | usize::from(low);
+                    if next_pos.is_none() {
+                        next_pos = Some(pos + 2);
+                    }
+                    // RFC 3397 compression pointers must point to an
+                    // earlier occurrence, so following them always moves
+                    // backwards and cannot loop. Guard against malformed
+                    // input with a bounded jump counter anyway.
+                    if offset >= pos || offset >= data.len() {
+                        return Err(DhcpError::new(
+                            ErrorKind::InvalidDhcpMessage,
+                            format!(
+                                "{err_str}: invalid compression pointer \
+                                 {offset}"
+                            ),
+                        ));
+                    }
+                    jumps += 1;
+                    if jumps > data.len() {
+                        return Err(DhcpError::new(
+                            ErrorKind::InvalidDhcpMessage,
+                            format!("{err_str}: compression pointer loop"),
+                        ));
+                    }
+                    pos = offset;
+                }
+                _ => {
+                    return Err(DhcpError::new(
+                        ErrorKind::InvalidDhcpMessage,
+                        format!(
+                            "{err_str}: unsupported label type 0x{len:02x}"
+                        ),
+                    ));
+                }
+            }
+        }
+
+        Ok((labels.join("."), next_pos.unwrap_or(pos)))
+    }
+
+    pub(crate) fn emit(names: &[String], buf: &mut BufferMut) {
+        let mut data = BufferMut::new();
+        let mut offsets: HashMap<String, usize> = HashMap::new();
+        for name in names {
+            Self::emit_name(name, &mut data, &mut offsets);
+        }
+        buf.write_u8(data.len() as u8);
+        buf.write_bytes(data.data.as_slice());
+    }
+
+    fn emit_name(
+        name: &str,
+        buf: &mut BufferMut,
+        offsets: &mut HashMap<String, usize>,
+    ) {
+        let trimmed = name.trim_end_matches('.');
+        let labels: Vec<&str> = if trimmed.is_empty() {
+            Vec::new()
+        } else {
+            trimmed.split('.').collect()
+        };
+
+        if labels.is_empty() {
+            buf.write_u8(0);
+            return;
+        }
+
+        let mut pointer: Option<usize> = None;
+        let mut write_labels = labels.len();
+        for i in 0..labels.len() {
+            let suffix = labels[i..].join(".");
+            if let Some(&offset) = offsets.get(&suffix) {
+                if offset <= Self::POINTER_MAX_OFFSET {
+                    pointer = Some(offset);
+                    write_labels = i;
+                    break;
+                }
+            }
+        }
+
+        for (i, label) in labels.iter().enumerate().take(write_labels) {
+            let offset = buf.len();
+            if offset <= Self::POINTER_MAX_OFFSET {
+                offsets.entry(labels[i..].join(".")).or_insert(offset);
+            }
+            let mut label_bytes = label.as_bytes();
+            if label_bytes.len() > Self::MAX_LABEL_LEN {
+                log::warn!(
+                    "Domain search label is longer than {} octets, \
+                     truncating: {label}",
+                    Self::MAX_LABEL_LEN
+                );
+                label_bytes = &label_bytes[..Self::MAX_LABEL_LEN];
+            }
+            buf.write_u8(label_bytes.len() as u8);
+            buf.write_bytes(label_bytes);
+        }
+
+        match pointer {
+            Some(offset) => {
+                buf.write_u8(Self::POINTER_MASK | ((offset >> 8) as u8 & 0x3f));
+                buf.write_u8((offset & 0xff) as u8);
+            }
+            None => buf.write_u8(0),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct DhcpV4OptionUnknown {
     pub code: u8,
@@ -952,6 +1150,54 @@ mod test {
             let opts = parse_options(&buf.data);
             assert_eq!(opts.get(opt.code()), Some(&opt));
         }
+    }
+
+    #[test]
+    fn test_parse_domain_search_with_compression() {
+        // "example.com" followed by "www.example.com" where the second
+        // name points back to the first one at offset 0.
+        let raw = [
+            7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm',
+            0, 3, b'w', b'w', b'w', 0xc0, 0x00,
+        ];
+        assert_eq!(
+            DhcpV4DomainSearch::parse(&raw).unwrap(),
+            vec!["example.com".to_string(), "www.example.com".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_parse_domain_search_option() {
+        let opts = parse_options(&[
+            119, 13, 7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c',
+            b'o', b'm', 0, 0xff,
+        ]);
+        assert_eq!(
+            opts.get(DhcpV4OptionCode::DomainSearch),
+            Some(&DhcpV4Option::DomainSearch(vec!["example.com".to_string()]))
+        );
+    }
+
+    #[test]
+    fn test_parse_domain_search_rejects_pointer_loop() {
+        // Pointer at offset 0 pointing to itself must not loop forever.
+        assert!(DhcpV4DomainSearch::parse(&[0xc0, 0x00]).is_err());
+    }
+
+    #[test]
+    fn test_domain_search_compression_round_trip() {
+        let names = vec![
+            "example.com".to_string(),
+            "www.example.com".to_string(),
+            "mail.example.com".to_string(),
+            "other.net".to_string(),
+        ];
+        let mut buf = BufferMut::new();
+        DhcpV4DomainSearch::emit(&names, &mut buf);
+        assert_eq!(DhcpV4DomainSearch::parse(&buf.data[1..]).unwrap(), names);
+        // The shared "example.com" suffix should be encoded only once.
+        assert_eq!(buf.data[0] as usize, buf.data.len() - 1);
+        assert!(buf.data.windows(2).any(|w| w[0] & 0xc0 == 0xc0));
     }
 
     #[test]
