@@ -45,6 +45,7 @@ impl Default for DhcpV4Config {
                 DhcpV4OptionCode::DomainName,
                 DhcpV4OptionCode::InterfaceMtu,
                 DhcpV4OptionCode::NtpServers,
+                DhcpV4OptionCode::DomainSearch,
                 DhcpV4OptionCode::ClasslessStaticRoute,
                 DhcpV4OptionCode::MS_CLASSLESS_STATIC_ROUTE,
             ],
@@ -195,6 +196,7 @@ impl DhcpV4Config {
     /// * Domain Name (15)
     /// * Interface MTU (26)
     /// * NTP Servers (42)
+    /// * Domain Search (119)
     /// * Classless Static Route (121)
     /// * Microsoft Classless Static Route (249)
     ///

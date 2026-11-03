@@ -40,6 +40,15 @@ fn test_dhcpv4() {
             // return FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID.
             assert_eq!(lease.yiaddr, FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID,);
 
+            // dnsmasq encodes option 119 as an RFC 3397 domain list.
+            assert_eq!(
+                lease.domain_search,
+                Some(vec![
+                    "example.com".to_string(),
+                    "internal.example.com".to_string(),
+                ])
+            );
+
             assert_eq!(
                 lease.classless_routes.as_deref().unwrap(),
                 &[DhcpV4ClasslessRoute {

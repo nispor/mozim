@@ -34,6 +34,13 @@ fn test_dhcpv4_no_netlink() {
             );
             assert_eq!(lease.yiaddr, FOO1_STATIC_IP_HOSTNAME_AS_CLIENT_ID);
             assert_eq!(
+                lease.domain_search,
+                Some(vec![
+                    "example.com".to_string(),
+                    "internal.example.com".to_string(),
+                ])
+            );
+            assert_eq!(
                 lease.classless_routes.as_deref().unwrap(),
                 &[DhcpV4ClasslessRoute {
                     destination: TEST_CLS_DST,

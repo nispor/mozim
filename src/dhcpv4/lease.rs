@@ -46,6 +46,8 @@ pub struct DhcpV4Lease {
     pub mtu: Option<u16>,
     pub host_name: Option<String>,
     pub domain_name: Option<String>,
+    /// Domain search list from option 119 (RFC 3397).
+    pub domain_search: Option<Vec<String>>,
     /// According to RFC 3442, once `Classless Static Routes` option is
     /// defined, DHCP client should ignore `Router` option. Hence if this
     /// properties is defined(not None), please do not use `gateways` property.
@@ -75,6 +77,7 @@ impl Default for DhcpV4Lease {
             mtu: None,
             host_name: None,
             domain_name: None,
+            domain_search: None,
             classless_routes: None,
             dhcp_opts: DhcpV4Options::default(),
         }
@@ -195,6 +198,11 @@ impl DhcpV4Lease {
             msg.options.get(DhcpV4OptionCode::DomainName)
         {
             ret.domain_name = Some(v.to_string());
+        }
+        if let Some(DhcpV4Option::DomainSearch(v)) =
+            msg.options.get(DhcpV4OptionCode::DomainSearch)
+        {
+            ret.domain_search = Some(v.clone());
         }
         if let Some(DhcpV4Option::ClasslessStaticRoute(v)) =
             msg.options.get(DhcpV4OptionCode::ClasslessStaticRoute)
@@ -555,6 +563,28 @@ mod test {
         };
         let lease = DhcpV4Lease::new_from_msg(&msg).unwrap();
         assert_eq!(lease.classless_routes, None);
+    }
+
+    #[test]
+    fn test_lease_domain_search() {
+        let mut opts = DhcpV4Options::new();
+        opts.insert(DhcpV4Option::IpAddressLeaseTime(100));
+        opts.insert(DhcpV4Option::DomainSearch(vec![
+            "example.com".to_string(),
+            "internal.example.com".to_string(),
+        ]));
+        let msg = DhcpV4Message {
+            options: opts,
+            ..Default::default()
+        };
+        let lease = DhcpV4Lease::new_from_msg(&msg).unwrap();
+        assert_eq!(
+            lease.domain_search,
+            Some(vec![
+                "example.com".to_string(),
+                "internal.example.com".to_string()
+            ])
+        );
     }
 
     #[test]
