@@ -21,7 +21,10 @@ use super::{
     msg::{DhcpV4Message, DhcpV4MessageType},
     proiscuous::enable_promiscuous_mode,
 };
-use crate::{DhcpError, DhcpV4Config, DhcpV4Lease, ErrorKind, ETH_ALEN};
+use crate::{
+    register_owned_fd, DhcpError, DhcpV4Config, DhcpV4Lease, ErrorKind,
+    ETH_ALEN,
+};
 
 const PACKET_HOST: u8 = 0; // a packet addressed to the local host
 pub(crate) const SERVER_PORT: u16 = 67;
@@ -185,7 +188,7 @@ impl DhcpRawSocket {
 
         log::debug!("Raw socket created {}", fd.as_raw_fd());
         Ok(DhcpRawSocket {
-            fd: AsyncFd::new(fd)?,
+            fd: register_owned_fd(fd)?,
         })
     }
 }

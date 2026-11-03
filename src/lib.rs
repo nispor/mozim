@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+mod async_fd;
 mod buffer;
 mod dhcpv4;
 mod dhcpv6;
@@ -13,6 +14,7 @@ mod time;
 mod integ_tests;
 
 pub(crate) use crate::{
+    async_fd::register_owned_fd,
     buffer::{Buffer, BufferMut},
     time::DhcpTimer,
 };
