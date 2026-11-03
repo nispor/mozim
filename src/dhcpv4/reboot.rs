@@ -36,8 +36,8 @@ impl DhcpV4Client {
                     if self.retry_count >= REBOOT_MAX_RETRY_COUNT {
                         log::info!(
                             "Failed to verify cached lease after \
-                             {REBOOT_MAX_RETRY_COUNT} tries (last error: {e}), \
-                             falling back to requesting a new lease"
+                             {REBOOT_MAX_RETRY_COUNT} tries (last error: \
+                             {e}), falling back to requesting a new lease"
                         );
                         self.lease = None;
                         self.retry_count = 0;
