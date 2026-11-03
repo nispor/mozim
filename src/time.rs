@@ -9,9 +9,8 @@ use nix::sys::{
         TimerSetTimeFlags,
     },
 };
-use tokio::io::unix::AsyncFd;
 
-use crate::{DhcpError, ErrorKind};
+use crate::{register_owned_fd, DhcpError, ErrorKind};
 
 /// Timer depend on CLOCK_BOOTTIME so it continue ticks when system
 /// sleeps/hibernates.
@@ -56,7 +55,7 @@ impl DhcpTimer {
                 remains.as_secs(),
                 remains.subsec_millis(),
             );
-            let _ = AsyncFd::new(OwnedFd::from(fd))?.readable().await?;
+            let _ = register_owned_fd(OwnedFd::from(fd))?.readable().await?;
         }
         Ok(())
     }
