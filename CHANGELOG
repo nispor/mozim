@@ -1,4 +1,24 @@
 # Changelog
+## [0.3.4] - 2026-11-04
+### Breaking changes
+ - N/A
+
+### New features
+ - dhcpv4: support Domain Search option (119). (b474ecf)
+
+### Bug fixes
+ - dhcpv6: fix Elapsed Time of the first Solicit. (22908a7)
+ - Use AsyncFd::register instead of deprecated new. (6ccc156)
+ - dhcpv4: verify provided lease via INIT-REBOOT in DhcpV4Client::init(). (ac5da6a)
+ - dhcpv4: advance retry backoff on discovery/request errors. (b4c1e59)
+ - dhcpv4: support option overload and expose `sname`/`file` in lease. (807949a)
+ - dhcpv6: fix IAID regenerated on every Solicit and restart. (74d815a)
+ - dhcpv4: fix option parsing desync on malformed option data. (8bf62ed)
+ - dhcpv6: reject delegated prefix length over 128. (0e95959)
+ - dhcpv6: fix dead code warnings in test environment. (28eb40b)
+ - dhcpv6: expose DNS servers in lease. (37e33af)
+ - dhcpv6: validate identifiers in Advertise/Reply. (fb34687)
+
 
 ## [Unreleased]
 ### Breaking changes
